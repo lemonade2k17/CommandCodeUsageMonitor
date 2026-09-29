@@ -27,3 +27,7 @@ desktop.ini
 
 # 桌面集成自检的运行时输出（每次运行都会变化，不入库）
 docs/ui-probe.txt
+
+# 配置文件含 API Key，本体保存在 %APPDATA%，绝不入库；
+# 此条防止将来把便携配置拷进项目目录时被误提交
+settings.ini

@@ -35,10 +35,6 @@
 | 任务栏按钮缩略信息 | **进度条与彩色角标共用一个开关**：`ITaskbarList3::SetProgressValue` 在按钮上显示占用率，`SetOverlayIcon` 另在右下角叠加彩底数字 | 开启 |
 | 关闭窗口时最小化到托盘 | 勾选后点关闭只隐藏窗口，需从托盘菜单「退出」才结束进程 | 关闭 |
 
-实机桌面效果（窗口 + 任务栏）：
-
-![桌面集成](docs/screenshot-desktop.png)
-
 任务栏按钮放大（图标下方的蓝色进度条即 `SetProgressValue` 的结果）：
 
 ![任务栏按钮](docs/screenshot-taskbar.png)
