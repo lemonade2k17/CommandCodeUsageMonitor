@@ -1499,6 +1499,13 @@ QString MainWindow::desktopProbeReport() const
     // 进程完整性级别：与上面的 HRESULT 组成完整因果链——此处为 Low 且 HRESULT 是
     // 0x80070005（E_ACCESSDENIED）时，即可判定"角标没生效"是环境权限所致，
     // 而不是程序缺陷；若此处为 Medium 却仍被拒，则说明原因另有其它，需要继续排查。
+    // 构建方式标识：静态版与共享版的 probe 报告字段完全相同，落盘后无法分辨来源；
+    // 用与 main.cpp 自检一致的 QT_STATIC 判据写明本进程是哪份产物，让证据自证。
+#ifdef QT_STATIC
+    lines << QStringLiteral("build = static");
+#else
+    lines << QStringLiteral("build = shared");
+#endif
     lines << QStringLiteral("processIntegrity = %1").arg(TaskbarProgress::processIntegrityLevel());
     // 北京时区解析结果：本静态构建未启用 ICU，IANA 名称走 Qt 的注册表映射，
     // "解析成功"还是"落到固定偏移兜底"从外部不可见，这里把事实直接写进报告。
