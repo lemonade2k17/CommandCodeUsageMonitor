@@ -224,7 +224,7 @@ private:
     void showBanner(const QString &text, bool warning, bool sticky = false);
 
     /**
-     * @brief 刷新状态栏上的「下次自动刷新：N 秒」文案。
+     * @brief 刷新状态栏上的「下次刷新」时刻文案（北京时间，每次刷新后随之更新）。
      * @return 无。
      * @note 刷新按钮处于禁用态（正在抓取）时直接返回，避免覆盖「正在刷新…」提示。
      */
@@ -342,6 +342,7 @@ private:
     QTimer *m_refreshTimer = nullptr;             ///< 自动刷新定时器，间隔取自 AppConfig::refreshSeconds()
     QTimer *m_tickTimer = nullptr;                ///< 每秒心跳定时器，驱动倒计时与重置文案
     int m_secondsToRefresh = 0;                   ///< 距下次自动刷新的剩余秒数，0 表示未启用
+    QDateTime m_nextRefreshAt;                    ///< 下次自动刷新的目标时刻（本机时区存储，展示时换算北京时间）；无效表示尚未排程
     QString m_keyOverride;                        ///< 命令行 --key 的临时覆盖，空串表示不覆盖
     QUrl m_baseUrlOverride;                       ///< 命令行 --base-url 的临时覆盖，无效或空表示不覆盖
 

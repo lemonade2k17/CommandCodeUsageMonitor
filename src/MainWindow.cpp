@@ -53,9 +53,43 @@
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTimer>
+// QTimeZone：把「下次刷新」目标时刻换算成北京时间展示（Asia/Shanghai 解析失败时有兜底）。
+#include <QTimeZone>
 #include <QVBoxLayout>
 // std::floor：百分比必须向下取整，才能与官网展示口径完全一致
 #include <cmath>
+
+// ===========================================================================
+//  本文件私有的辅助设施：不导出符号，仅供本翻译单元内的界面逻辑使用
+// ===========================================================================
+namespace {
+
+/**
+ * @brief 返回"北京时间"对应的时区对象。
+ *
+ * 状态栏的「下次刷新」时刻按北京时间展示：优先解析 IANA 名称 Asia/Shanghai，
+ * 拿到完整的时区规则；解析失败（极少数精简系统缺时区数据）时退回固定
+ * UTC+8 偏移——北京时间不实行夏令时，固定偏移在本场景下同样正确。
+ *
+ * @return QTimeZone，可直接用于 QDateTime::toTimeZone 的时区对象。
+ * @note 结果以函数级静态变量缓存：QTimeZone 的构造需要查询系统时区数据库，
+ *       而本函数处在每秒一次的心跳路径上，缓存可省去重复解析的开销。
+ */
+QTimeZone beijingTimeZone()
+{
+    // C++11 起函数级 static 初始化线程安全；本程序全部逻辑在主线程，更无竞争
+    static const QTimeZone cached = []() {
+        // IANA 名称由 Qt 在 Windows 上经系统时区机制解析；构造函数收 QByteArray 形式的时区 ID
+        const QTimeZone iana(QStringLiteral("Asia/Shanghai").toLatin1());
+        if (iana.isValid())
+            return iana;
+        // 兜底：固定偏移 +8 小时（28800 秒），语义即"东八区标准时间"
+        return QTimeZone(8 * 3600);
+    }();
+    return cached;
+}
+
+} // namespace
 
 /**
  * @brief 构造主窗口：设定窗口属性，装配界面，并创建 API 客户端与两个定时器。
@@ -703,6 +737,9 @@ void MainWindow::openSettings()
             m_refreshTimer->stop();
         // 倒计时与配置里的间隔保持同步，避免出现「刚设置完却显示旧秒数」
         m_secondsToRefresh = seconds > 0 ? seconds : 0;
+        // 目标时刻与倒计时同源重算：若随后的 refreshNow() 正常发起，会以同一口径覆盖；
+        // 这里先赋值是为了在"Key 为空、refreshNow() 提前返回"的路径上也不残留旧时刻
+        m_nextRefreshAt = seconds > 0 ? QDateTime::currentDateTime().addSecs(seconds) : QDateTime();
 
         // 桌面集成配置（托盘开关、任务栏开关、关闭行为、展示指标）立即生效。
         // 必须在这里立刻重算：它同时决定 closeEvent() 的隐藏条件与任务栏的清理动作，
@@ -724,6 +761,8 @@ void MainWindow::openSettings()
             // 暂时停掉自动刷新，避免与下面的手动刷新在短时间内重复请求
             m_refreshTimer->stop();
             m_secondsToRefresh = 0;
+            // 目标时刻同步作废：此刻的显示交给随后的 refreshNow() 重新排程后给出
+            m_nextRefreshAt = QDateTime();
             refreshNow();
         } else {
             // 其余情况（改地址、改间隔）只需刷新一次即可看到新结果
@@ -762,10 +801,16 @@ void MainWindow::refreshNow()
     if (seconds > 0) {
         m_refreshTimer->start(seconds * 1000);
         m_secondsToRefresh = seconds;
+        // 记录下一次刷新的目标时刻：以"本次刷新发起时"为基准，之后每秒心跳只读不写，
+        // 因此状态栏显示的是一个稳定的目标时刻，不会随倒计时逐秒抖动；
+        // 每次刷新发起都会走到这里，"刷新后时刻随之更新"由这一行天然保证
+        m_nextRefreshAt = QDateTime::currentDateTime().addSecs(seconds);
     } else {
         // 间隔为 0 表示用户关闭了自动刷新
         m_refreshTimer->stop();
         m_secondsToRefresh = 0;
+        // 同步作废目标时刻，避免状态栏残留一个不会再发生的旧时刻
+        m_nextRefreshAt = QDateTime();
     }
 
     // 先置忙碌态再发请求，防止用户在等待期间连点刷新按钮
@@ -830,23 +875,39 @@ void MainWindow::onTick()
 }
 
 /**
- * @brief 刷新状态栏上的「下次自动刷新：N 秒」文案。
+ * @brief 刷新状态栏上的「下次刷新」时刻文案（北京时间）。
  *
- * 刷新按钮处于禁用态说明正在抓取，此时状态栏的「正在刷新…」优先级更高，
- * 因此直接返回、不做覆盖。未启用自动刷新（秒数 ≤ 0）时同样不写任何文案，
+ * 展示的是排程好的目标时刻而不是逐秒递减的倒计时：目标时刻在每次刷新发起时
+ * 一次性写入 m_nextRefreshAt，之后心跳只读不写，因此文案在两次刷新之间保持稳定，
+ * 并在每次刷新后自动推进到下一次的时刻。刷新按钮处于禁用态说明正在抓取，
+ * 此时状态栏的「正在刷新…」优先级更高，直接返回、不做覆盖。
+ * 未排程（间隔为 0 或尚未刷新过）时同样不写任何文案，
  * 状态栏保留上一次的「最后更新 HH:mm:ss」，保证信息不会被无意义地抹掉。
  *
  * @return 无。
  * @note 用按钮可用性代替额外的忙碌标志位，避免重复状态导致不同步。
+ * @note 时刻一律换算成北京时间展示（系统时区不是东八区时也会正确换算），
+ *       跨天时补出日期，避免"凌晨看到次日时刻却不带日期"的歧义。
  */
 void MainWindow::updateCountdown()
 {
     // 按钮被禁用 = 正在抓取，此时不覆盖「正在刷新…」
     if (m_refreshButton->isEnabled() == false)
         return;
-    // 仅在启用了自动刷新时展示倒计时
-    if (m_secondsToRefresh > 0)
-        m_status->setText(tr("下次自动刷新：%1 秒").arg(m_secondsToRefresh));
+    // 仅在已排程下一次自动刷新时展示（间隔为 0 或尚未排程则维持现状）
+    if (m_secondsToRefresh > 0 && m_nextRefreshAt.isValid()) {
+        // 先把目标时刻换算到北京时区，再决定格式与文案
+        const QTimeZone beijing = beijingTimeZone();
+        const QDateTime beijingTime = m_nextRefreshAt.toTimeZone(beijing);
+        // 「是否同一天」也按北京时间的日历判断：显示口径必须与判断口径一致，
+        // 否则系统时区与东八区跨日不同步时会出现"明明跨天却不带日期"的文案
+        const bool sameBeijingDay = beijingTime.date() == QDateTime::currentDateTime(beijing).date();
+        // 同一天只给时刻；跨天补日期，便于隔天回看时仍能对上
+        const QString text = sameBeijingDay
+                                 ? beijingTime.toString(QStringLiteral("HH:mm:ss"))
+                                 : beijingTime.toString(QStringLiteral("MM-dd HH:mm:ss"));
+        m_status->setText(tr("下次刷新：%1（北京时间）").arg(text));
+    }
 }
 
 /**
@@ -1439,6 +1500,15 @@ QString MainWindow::desktopProbeReport() const
     // 0x80070005（E_ACCESSDENIED）时，即可判定"角标没生效"是环境权限所致，
     // 而不是程序缺陷；若此处为 Medium 却仍被拒，则说明原因另有其它，需要继续排查。
     lines << QStringLiteral("processIntegrity = %1").arg(TaskbarProgress::processIntegrityLevel());
+    // 北京时区解析结果：本静态构建未启用 ICU，IANA 名称走 Qt 的注册表映射，
+    // "解析成功"还是"落到固定偏移兜底"从外部不可见，这里把事实直接写进报告。
+    // id 为 Asia/Shanghai 说明走的是完整时区规则；为 UTC+08:00 形态说明走了兜底，
+    // 两者对"北京时间"的当前显示都是正确的，但排查环境问题时必须能区分。
+    const QTimeZone beijing = beijingTimeZone();
+    lines << QStringLiteral("beijingTz = %1 (valid=%2, offset=%3)")
+                  .arg(QString::fromLatin1(beijing.id()))
+                  .arg(beijing.isValid() ? QStringLiteral("yes") : QStringLiteral("no"))
+                  .arg(beijing.offsetFromUtc(QDateTime::currentDateTime()));
     lines << QStringLiteral("quitOnLastWindowClosed = %1")
                  .arg(QApplication::quitOnLastWindowClosed() ? QStringLiteral("yes") : QStringLiteral("no"));
     lines << QStringLiteral("closeToTray = %1")
