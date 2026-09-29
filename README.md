@@ -254,3 +254,4 @@ CommandCodeUsageMonitor/
 - 服务端只提供账号级聚合数据，**没有按模型拆分的用量/计费**；本工具同样只能显示聚合口径。若需要按模型统计，只能在本机会话记录或调用侧自行记账。
 - 接口未公开、无版本承诺，Command Code 若调整 `/alpha/*` 路径或字段，需要同步更新 `CommandCodeApi.cpp`。
 - 界面语言为简体中文，随系统字体渲染。
+- **共享版必须先部署运行库再分发**（`build.ps1 -Deploy` 或手动 windeployqt）：exe 本身不带 Qt DLL，若直接双击，加载器会顺着 PATH 找 `Qt6Core.dll`——PATH 上其它软件自带的旧版 Qt（实测：Snipaste 目录里的 Qt6Core.dll 就会被命中）缺少新版导出符号，会报"无法定位程序输入点 _Z20qEnvironmentVariable…"。部署到 exe 旁之后，加载器优先使用同目录 DLL，不再受 PATH 干扰。需要单文件分发时请改用静态版。

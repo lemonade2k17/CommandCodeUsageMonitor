@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 #  build.ps1 —— 用【已安装的 Qt】构建本项目（共享版，最快）
 #
 #  用法：
@@ -63,13 +63,35 @@ if ($LASTEXITCODE -ne 0) { throw "编译失败" }
 $exe = Join-Path $buildPath 'commandcode-usage.exe'
 Write-Host "`n构建完成: $exe" -ForegroundColor Green
 
-# ---- 4. 可选：部署 Qt DLL ----
+# ---- 4. 可选：部署 Qt 运行库 ----
+# 没有这一步时，exe 旁没有任何 DLL，加载器会顺着 PATH 找 Qt6Core.dll——PATH 上
+# 其它软件自带的旧版 Qt（实测 Snipaste 目录里的 6.2.4 会被命中）缺少新版导出符号，
+# 程序会直接报"无法定位程序输入点"而无法启动。部署后 exe 旁的 DLL 优先级最高。
 if ($Deploy) {
     $windeployqt = Join-Path $QtDir 'bin\windeployqt.exe'
     if (Test-Path $windeployqt) {
-        & $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw $exe
-        Write-Host "已用 windeployqt 部署运行时 DLL" -ForegroundColor Green
+        # --compiler-runtime 一并部署 MinGW 编译器运行时（libstdc++-6 / libgcc_s_seh-1 /
+        # libwinpthread-1）：PATH 上没有任何目录提供这三个 DLL，缺了它们下一个错就是
+        # "丢失 libstdc++-6.dll"。
+        & $windeployqt --release --compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw $exe
+        if ($LASTEXITCODE -ne 0) { throw "windeployqt 部署失败（退出码 $LASTEXITCODE）" }
+        Write-Host "已用 windeployqt 部署 Qt 运行库与编译器运行时" -ForegroundColor Green
     } else {
         Write-Warning "未找到 windeployqt，跳过部署"
     }
+} else {
+    Write-Warning "未部署运行库（-Deploy）：此目录缺少 Qt DLL，直接双击 exe 会加载到 PATH 上其它软件自带的旧版 Qt 而报错。分发或本机运行请加 -Deploy，或改用静态版。"
 }
+
+# ---- 5. 交付前把 exe 的完整性级别显式设为 Medium ----
+# 与 build-static.ps1 相同的理由：项目目录被会话沙箱打了低完整性（Low Integrity
+# Level）强制标签并被子项继承，双击本 exe 会得到低完整性进程，导致任务栏角标被
+# UIPI 拒绝（E_ACCESSDENIED）、托盘注册不可靠、QStandardPaths 把配置重定向到
+# LocalLow。显式的文件级标签优先于继承标签；每次重新链接都会生成新文件（重新继承
+# 目录标签），因此这一步必须放在每次构建的最后（部署动作之后），不能只做一次。
+$icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+Write-Host "`n=== 设置 exe 完整性级别为 Medium ===" -ForegroundColor Cyan
+& $icacls $exe /setintegritylevel M
+if ($LASTEXITCODE -ne 0) { throw "icacls /setintegritylevel 失败（退出码 $LASTEXITCODE）" }
+# 回显标签行，便于在构建日志里核对（应出现 Medium Mandatory Level）
+& $icacls $exe | Select-String 'Mandatory'
