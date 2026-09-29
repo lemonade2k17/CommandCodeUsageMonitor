@@ -257,9 +257,6 @@ QLabel#status  { color: @muted; }
 QLabel#muted   { color: @muted; }
 QLabel#cardTitle { color: @muted; }
 
-/* ---- 错误汇总 ---- */
-QLabel#errors { color: @danger; }
-
 /* ---- 顶部横幅：圆角与内边距常驻，底色随语义级别变化 ---- */
 QLabel#banner { padding: 8px 12px; border-radius: 6px; }
 QLabel#banner[level="warn"] {
@@ -273,6 +270,9 @@ QLabel#banner[level="ok"] {
 QLabel#limitPercent[level="ok"]     { color: @success; }
 QLabel#limitPercent[level="warn"]   { color: @warning; }
 QLabel#limitPercent[level="danger"] { color: @danger; }
+
+/* ---- 状态栏：查询失败时整体标红（成功 / 刷新中不设级别，用默认色） ---- */
+QLabel#status[level="danger"] { color: @danger; }
 
 /* ---- 设置对话框：常驻提示、逃生说明与状态标签 ---- */
 QLabel#dialogHint { color: @muted; }

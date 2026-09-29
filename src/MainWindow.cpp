@@ -402,6 +402,9 @@ void MainWindow::buildUi()
     // 状态标签：在「正在刷新 / 下次自动刷新 / 最后更新」几种文案之间切换
     m_status = new QLabel(tr("尚未刷新"));
     m_status->setObjectName(QStringLiteral("status"));
+    // 错误原因可能包含服务端返回的任意文本：显式声明纯文本格式，
+    // 避免 QLabel 的富文本自动探测把尖括号内容当 HTML 渲染
+    m_status->setTextFormat(Qt::PlainText);
     header->addWidget(m_status);
 
     // 刷新按钮：点击即手动触发一次抓取，抓取期间由 setBusy() 置灰防止重复请求
@@ -559,16 +562,11 @@ void MainWindow::buildUi()
     root->addWidget(limitsCard, 1);
 
     // ---------------- 错误信息 ----------------
-    // 底部错误区同样默认隐藏，仅在快照携带 errors 时由 applySnapshot() 显示；
-    // 它只承载「部分接口失败」这类可恢复的提示，致命错误由 API Key 横幅负责。
-    // 位置刻意放在最底部：失败信息重要但不常用，放在此处既不遮挡主数据，
-    // 又因为允许换行而不会把整窗布局撑变形。
-    m_errors = new QLabel;
-    m_errors->setObjectName(QStringLiteral("errors"));
-    // 多个接口的报错会逐行拼接，必须允许换行
-    m_errors->setWordWrap(true);
-    m_errors->hide();
-    root->addWidget(m_errors);
+    // 刻意**不设**底部错误区：错误文字会随行数增高，把上方卡片挤压变形
+    // （用户实测：一次超时之后，套餐/统计两张卡片被压扁）。
+    // 失败信息改由右上角状态栏承载：一行「查询失败：<原因>」就地给出结论，
+    // 多接口的完整明细放进状态栏的悬停提示（tooltip），不占任何布局空间。
+    // 参见 onFailed() / applySnapshot() / showFailure()。
 
     // 全局样式表不在此处下发：它由 AppTheme 依据当前生效主题生成，并挂在
     // QApplication 上（见 AppTheme::applyInternal()）。之所以不再挂到中央部件：
@@ -795,6 +793,16 @@ void MainWindow::openSettings()
  */
 void MainWindow::refreshNow()
 {
+    // 防重入闸门：上一轮抓取尚未结束时（刷新按钮处于禁用态），自动刷新定时器
+    // 到点仍会触发本函数。此时再 fetchAll() 会重置状态机，而在途请求的回包
+    // 稍后到达时，会把**新一轮**的接口标签从在途集合里"偷走"，造成快照提前、
+    // 重复收尾。因此忙碌期间到点的自动刷新直接忽略：在途轮次发起时已经重启过
+    // 定时器，结束后下一次到点自然恢复正常刷新。
+    // 注：openSettings() 保存后在忙碌期发起的刷新同样会被忽略一次，
+    //     最迟在下一次自动刷新到点时生效（间隔 ≤ 用户设置的刷新秒数）。
+    if (m_refreshButton && !m_refreshButton->isEnabled())
+        return;
+
     // 无 Key 直接放弃：发出去的请求必然 401，徒增错误提示
     if (effectiveApiKey().isEmpty())
     {
@@ -915,6 +923,13 @@ void MainWindow::updateCountdown()
     // 按钮被禁用 = 正在抓取，此时不覆盖「正在刷新…」
     if (m_refreshButton->isEnabled() == false)
         return;
+    // 失败状态优先于倒计时：一次失败必须持续显示到下一次刷新发起，
+    // 否则下一秒就会被「下次刷新」倒计时覆盖，用户来不及看到失败结论与原因
+    if (m_lastRefreshFailed)
+    {
+        showFailure(m_lastFailureReason, m_lastFailureDetails);
+        return;
+    }
     // 仅在已排程下一次自动刷新时展示（间隔为 0 或尚未排程则维持现状）
     if (m_secondsToRefresh > 0 && m_nextRefreshAt.isValid())
     {
@@ -1042,21 +1057,76 @@ QString MainWindow::formatCountdown(const QDateTime &resetAt)
 }
 
 /**
- * @brief 抓取失败槽：结束忙碌态并把错误信息显示在窗口底部的错误区。
+ * @brief 把状态栏切换为「查询失败」并记录失败原因。
  *
- * 失败时只动错误区与按钮状态，不清空已有数据——保留上一次成功的数据比清空更有用，
- * 用户仍能看到旧的用量，同时明确知道本次抓取失败。
+ * 失败状态必须**持续显示**：如果只设置一次文本，下一秒的心跳 updateCountdown()
+ * 就会用「下次刷新」倒计时把它覆盖掉，用户根本来不及看到失败结论；
+ * 因此这里同时记录标志位与原因，由 updateCountdown() 在每次重绘时维持该文案。
+ *
+ * @param[in] reason QString，展示在状态栏里的失败原因（宜精简，一行以内）。
+ * @param[in] details QString，悬停提示里的完整明细（多接口逐条）；空串时用 reason。
+ * @return 无。
+ * @note 颜色走语义级别 danger，由 AppTheme 按当前主题给出（深浅两套各自保证对比度）。
+ * @note 只影响状态栏，不改动任何数据控件；旧数据保留策略见 onFailed()。
+ */
+void MainWindow::showFailure(const QString &reason, const QString &details)
+{
+    // 幂等保护：updateCountdown() 每秒都会以同一对参数调用本函数，
+    // 内容未变化时直接返回，避免每秒重复 setText/setToolTip 造成无谓重绘
+    const QString detailsNorm = details.isEmpty() ? reason : details;
+    if (m_lastRefreshFailed && m_lastFailureReason == reason && m_lastFailureDetails == detailsNorm)
+        return;
+
+    m_lastRefreshFailed = true;
+    m_lastFailureReason = reason;
+    m_lastFailureDetails = detailsNorm;
+    // 状态栏是一行 QLabel，没有省略号机制：原因过长会把顶栏撑宽。
+    // 展示文本按 340 逻辑像素做省略号截断，完整原因仍在悬停提示里，不丢信息；
+    // updateCountdown() 每秒重绘时走同一截断，显示稳定一致。
+    const QFontMetrics metrics = m_status->fontMetrics();
+    const QString shown = metrics.elidedText(tr("查询失败：%1").arg(reason),
+                                             Qt::ElideRight, 340);
+    m_status->setText(shown);
+    // 完整明细（多接口逐条）放悬停提示：既保留全部信息，又不占一像素布局空间
+    m_status->setToolTip(m_lastFailureDetails);
+    AppTheme::setLevel(m_status, QStringLiteral("danger"));
+}
+
+/**
+ * @brief 清除失败状态：状态栏回到常规文案，悬停提示与语义级别一并复位。
+ * @return 无。
+ * @note 只在快照无错误（成功或部分数据全部可用）时由 applySnapshot() 调用。
+ */
+void MainWindow::clearFailure()
+{
+    m_lastRefreshFailed = false;
+    m_lastFailureReason.clear();
+    m_lastFailureDetails.clear();
+    m_status->setToolTip(QString());
+    AppTheme::setLevel(m_status, QString());
+}
+
+/**
+ * @brief 抓取失败槽：恢复按钮可用性，并把状态栏切换为「查询失败：<原因>」（红色）。
+ *
+ * 已有数据不清空——保留上一次成功的数据比清空更有用，用户仍能看到旧的用量，
+ * 同时通过状态栏明确知道本次抓取失败了；失败原因全文放悬停提示。
  *
  * @param[in] message QString，来自 CommandCodeApi 的错误描述文本。
  * @return 无。
- * @note 错误区会一直显示，直到下一次成功抓取且快照 errors 为空时被隐藏。
+ * @note 失败文案会持续显示，直到下一次刷新发起（变回「正在刷新…」）
+ *       或下一次成功抓取（变回「最后更新 HH:mm:ss」）。
  */
 void MainWindow::onFailed(const QString &message)
 {
     // 恢复刷新按钮可用性，否则一次失败会让界面永久卡在忙碌态
     setBusy(false);
-    m_errors->setText(message);
-    m_errors->show();
+    // 状态栏就地给出「查询失败 + 原因」；此前失败后状态栏立刻切回
+    // 「下次刷新」倒计时，用户完全看不出这一轮失败了。
+    showFailure(message, message);
+    // 数据保留策略：不清空上一次成功的数据。一次 20 秒超时就把整套数字清空，
+    // 会让用户在等待重试的窗口里失去全部参考信息；失败结论由状态栏明确给出，
+    // 不会与旧数据混淆。若希望失败即清空，把这里换成 applySnapshot() 的占位逻辑即可。
 }
 
 /**
@@ -1263,21 +1333,29 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 不能因为一次成功抓取就悄悄消失，否则用户会以为已经配置好了。
     if (snapshot.errors.isEmpty())
     {
-        m_errors->hide();
+        // 成功即清除失败状态：状态栏回到「最后更新 / 下次刷新」的正常文案
+        clearFailure();
         // 只隐藏一次性提示；常驻横幅（如未配置 API Key）必须继续留在界面上
         if (m_banner->isVisible() && !m_bannerSticky)
             m_banner->hide();
+        // 时间戳只到秒：用户关心的是「数据有多新」，日期部分没有意义
+        m_status->setText(tr("最后更新 %1").arg(snapshot.fetchedAt.toString(QStringLiteral("HH:mm:ss"))));
     }
     else
     {
-        // 多个接口的报错逐行拼接，便于用户按接口定位问题
-        m_errors->setText(tr("部分数据获取失败：\n%1").arg(snapshot.errors.join(QLatin1Char('\n'))));
-        m_errors->show();
+        // 部分接口失败：状态栏就地给出「查询失败 + 首条原因」，多接口明细放悬停提示。
+        // **不再**写入底部错误区——那块区域会随错误行数增高，把上方卡片挤压变形
+        // （用户实测：一次超时后套餐/统计两张卡片被压扁）。
+        // 数据照常渲染：失败接口的数值保持「—」，成功接口的数值仍然更新。
+        const QString reason = snapshot.errors.first()
+                                 + (snapshot.errors.size() > 1
+                                        ? tr(" 等 %1 项").arg(snapshot.errors.size())
+                                        : QString());
+        showFailure(reason, snapshot.errors.join(QLatin1Char('\n')));
     }
 
-    // 时间戳只到秒：用户关心的是「数据有多新」，日期部分没有意义
-    m_status->setText(tr("最后更新 %1").arg(snapshot.fetchedAt.toString(QStringLiteral("HH:mm:ss"))));
-    // 刷新成功后立即恢复倒计时文案，不必等下一次心跳
+    // 刷新结束后立即恢复倒计时文案，不必等下一次心跳；
+    // 失败路径由 updateCountdown() 内的失败分支维持「查询失败」文案，不会被覆盖
     updateCountdown();
 
     // ---------------- 桌面集成（托盘 / 任务栏）----------------

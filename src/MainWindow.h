@@ -210,6 +210,27 @@ private:
     void setBusy(bool busy);
 
     /**
+     * @brief 把状态栏切换为「查询失败：<原因>」，并持续显示到下一次刷新发起。
+     *
+     * 失败状态由 m_lastRefreshFailed / m_lastFailureReason / m_lastFailureDetails
+     * 三者共同记录：updateCountdown() 每秒心跳都会调用本函数维持文案，
+     * 否则失败结论会在一秒内被「下次刷新」倒计时覆盖。
+     *
+     * @param[in] reason QString，状态栏里展示的精简原因。
+     * @param[in] details QString，悬停提示里的完整明细；空串时与 reason 相同。
+     * @return 无。
+     * @note 颜色走语义级别 danger；只改状态栏，不动任何数据控件。
+     */
+    void showFailure(const QString &reason, const QString &details);
+
+    /**
+     * @brief 清除失败状态：复位标志位、悬停提示与语义级别。
+     * @return 无。
+     * @note 在快照无错误（成功）时由 applySnapshot() 调用。
+     */
+    void clearFailure();
+
+    /**
      * @brief 显示顶部提示横幅，并设置其配色与是否常驻。
      *
      * 横幅分两类：常驻型（如未配置 API Key）与一次性提示（如「API Key 已保存」）；
@@ -349,7 +370,7 @@ private:
     // ---------------- 顶部提示与状态 ----------------
     QLabel *m_banner = nullptr;                   ///< 顶部提示横幅，常驻型与一次性提示共用
     bool m_bannerSticky = false;                  ///< true = 常驻提示（如未配置 API Key），false = 拿到数据后自动消失
-    QLabel *m_status = nullptr;                   ///< 右上角状态文案：正在刷新 / 下次自动刷新 / 最后更新
+    QLabel *m_status = nullptr;                   ///< 右上角状态文案：正在刷新 / 下次自动刷新 / 最后更新 / 查询失败
     QPushButton *m_refreshButton = nullptr;       ///< 「刷新」按钮，抓取期间被 setBusy() 置灰
 
     // 套餐卡
@@ -378,8 +399,10 @@ private:
     QLabel *m_tokensDetail = nullptr;             ///< 输入与输出 token 的分项数值
     QLabel *m_costValue = nullptr;                ///< 已消耗 credits 与单次平均成本
 
-    // ---------------- 底部信息区 ----------------
-    QLabel *m_errors = nullptr;                   ///< 部分数据获取失败的汇总提示，无错误时隐藏
+    // ---------------- 刷新失败状态（状态栏「查询失败」文案的数据源） ----------------
+    bool m_lastRefreshFailed = false;             ///< 上一次刷新是否失败；失败时状态栏持续显示原因
+    QString m_lastFailureReason;                  ///< 状态栏展示的精简原因（一行以内）
+    QString m_lastFailureDetails;                 ///< 悬停提示展示的完整明细（多接口逐条）
     QLabel *m_account = nullptr;                  ///< 当前账号展示，优先用户名，其次邮箱、用户 ID
 
     // ---------------- 桌面集成（托盘 / 任务栏）----------------
