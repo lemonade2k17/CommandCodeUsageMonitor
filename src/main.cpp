@@ -21,6 +21,8 @@
 
 // Qt 头文件分组：先应用层，再命令行解析，再时间/路径/事件循环/文件/定时器。
 // 之所以显式包含 QEventLoop 与 QTimer，是因为自检模式要自己跑一个局部事件循环。
+#include "AppTheme.h"
+
 #include <QApplication>
 // QCommandLineOption / QCommandLineParser：命令行选项的定义与解析。
 #include <QCommandLineOption>
@@ -316,6 +318,7 @@ int runSelfTest(const QString &apiKeyOverride, const QString &baseUrlOverride)
  *   --key <key>         本次运行临时使用的 API Key（不写入配置）；
  *   --base-url <url>    本次运行临时使用的 API 地址（不写入配置）；
  *   --out <file>        把自检输出同时写入指定文件（覆盖同名旧文件）；
+ *   --theme <mode>      本次运行临时使用的外观主题（light/dark/system，不写入配置）；
  *   --help / --version  由 Qt 自动提供，打印用法或版本后直接退出。
  *
  * @param[in] argc int，命令行参数个数（含程序自身路径），由 C 运行时传入。
@@ -336,6 +339,12 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationName(QStringLiteral("CommandCodeUsageMonitor"));
     QCoreApplication::setApplicationName(QStringLiteral("CommandCodeUsageMonitor"));
     QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+
+    // 应用外观主题（浅色 / 深色 / 跟随系统）。
+    // 位置有两处讲究：① 必须在组织名 / 应用名之后——主题模式存在配置文件里，
+    // 而配置文件路径由这两个名字共同决定；② 必须在创建任何窗口之前——否则界面
+    // 会先按默认配色绘制一帧再被重绘成目标主题，用户能看到一次闪烁。
+    AppTheme::initialize(&app);
 
     // 命令行解析器：负责识别选项、给出 --help/--version 文本并在出错时终止进程。
     QCommandLineParser parser;
@@ -373,6 +382,14 @@ int main(int argc, char *argv[])
     // 用户不必去任务管理器里结束进程。
     QCommandLineOption quitOption(QStringLiteral("quit"),
                                   QStringLiteral("请求已在运行的实例退出（无实例时直接返回）"));
+    // --theme：本次运行临时使用的外观主题，与 --key / --base-url 同一语义
+    // （只影响本次运行、不写入配置）。存在的意义有两个：
+    //   ① 让脚本能在指定主题下启动程序做截图对照，验证深浅两套配色；
+    //   ② 用户只想"看一眼深色效果"时不必改动自己的持久化设置。
+    QCommandLineOption themeOption(QStringLiteral("theme"),
+                                   QStringLiteral("临时指定外观主题（light/dark/system，仅本次运行；"
+                                                  "未识别的取值按 system 处理）"),
+                                   QStringLiteral("mode"));
     // 逐个注册：addOption 之后 parser 才认识它们，缺失选项一律不算错误。
     parser.addOption(selfTestOption);
     parser.addOption(keyOption);
@@ -380,8 +397,21 @@ int main(int argc, char *argv[])
     parser.addOption(outOption);
     parser.addOption(probeOption);
     parser.addOption(quitOption);
+    parser.addOption(themeOption);
     // 执行解析：遇到未知选项会打印错误并退出进程，因此后面的代码无需再做校验。
     parser.process(app);
+
+    // 外观主题的命令行覆盖：必须在创建任何窗口之前应用，否则会先按配置里的主题
+    // 绘制一帧再切换，出现可见闪烁。取值非法时回退为 system 并给出告警，
+    // 而不是直接终止进程——外观参数写错不该让程序起不来。
+    if (parser.isSet(themeOption)) {
+        const QString requested = parser.value(themeOption).trimmed().toLower();
+        if (requested != QLatin1String("light") && requested != QLatin1String("dark")
+            && requested != QLatin1String("system")) {
+            qWarning("未知的 --theme 取值 \"%s\"，已回退为 system。", qPrintable(requested));
+        }
+        AppTheme::overrideMode(AppConfig::themeModeFromKey(requested, AppConfig::ThemeMode::system));
+    }
 
     // 自检分支：全程无界面，结束后直接以自检结果的退出码结束进程。
     if (parser.isSet(selfTestOption)) {

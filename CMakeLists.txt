@@ -22,6 +22,8 @@ qt_add_executable(commandcode-usage
     src/main.cpp
     src/AppConfig.h
     src/AppConfig.cpp
+    src/AppTheme.h
+    src/AppTheme.cpp
     src/UsageTypes.h
     src/CommandCodeApi.h
     src/CommandCodeApi.cpp

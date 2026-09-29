@@ -520,4 +520,89 @@ void setStatusMetric(StatusMetric metric)
     s.sync();
 }
 
+// ===========================================================================
+//  外观主题
+// ===========================================================================
+
+/**
+ * @brief 把主题模式转成可持久化的英文键名。
+ *
+ * 用英文键名而不是枚举整数值落盘，是为了让 settings.ini 手工可读、可改；
+ * 同时也避免将来枚举成员顺序调整时把用户的选择映射到另一档。
+ *
+ * @param[in] mode ThemeMode，待转换的主题模式。
+ * @return QString，形如 "light" / "dark" / "system"。
+ * @note 枚举被扩展却漏补分支时返回 "system"：这是三档中最保守的一档，
+ *       比静默写成 "light" 更不容易让用户看到意料之外的外观。
+ */
+QString themeModeKey(ThemeMode mode)
+{
+    switch (mode) {
+    case ThemeMode::light:
+        return QStringLiteral("light");
+    case ThemeMode::dark:
+        return QStringLiteral("dark");
+    case ThemeMode::system:
+        return QStringLiteral("system");
+    }
+    // 纯防御性分支：只有编译期新增枚举成员而忘记同步本函数时才可能到达。
+    return QStringLiteral("system");
+}
+
+/**
+ * @brief 把配置文件中读到的键名还原成主题模式。
+ *
+ * 逐项字符串比较，使"非法值"与"缺失值"走同一条回退路径：任何未识别的字符串
+ * （手工改坏配置、从更新版本回退、大小写被改错）都返回调用方给出的 fallback。
+ *
+ * @param[in] key QString，从 ui/theme 读到的键名；可能为空或未识别。
+ * @param[in] fallback ThemeMode，无法识别时使用的兜底模式，由调用方指定。
+ * @return ThemeMode，识别成功时返回对应模式，否则原样返回 fallback。
+ * @note 把 fallback 交给调用方传入，是为了让"当前默认模式"只在 themeMode() 一处
+ *       定义，将来调整默认值时不必同步修改这里。
+ */
+ThemeMode themeModeFromKey(const QString &key, ThemeMode fallback)
+{
+    if (key == QLatin1String("light"))
+        return ThemeMode::light;
+    if (key == QLatin1String("dark"))
+        return ThemeMode::dark;
+    if (key == QLatin1String("system"))
+        return ThemeMode::system;
+    // 配置属于外部输入，永远可能被人工编辑；未识别的值只应安静地退回默认档，
+    // 而不应让程序起不来或弹错。
+    return fallback;
+}
+
+/**
+ * @brief 读取界面主题模式。默认为 system（跟随系统）。
+ *
+ * 默认跟随系统是有意为之：绝大多数用户希望程序与系统设置保持一致，
+ * 只有明确需要固定观感的用户才会去显式选择浅色或深色。
+ * 实现上分两层兜底：QSettings 的第二参数处理"键缺失"，themeModeFromKey()
+ * 处理"键存在但内容非法"，因此返回值在任何配置状态下都合法。
+ *
+ * @return ThemeMode，当前生效的主题模式；缺失或非法时返回 system。
+ * @note 只读取"用户选了哪一档"，不涉及"系统当前是深是浅"，故本文件无需 GUI 依赖。
+ */
+ThemeMode themeMode()
+{
+    QSettings s = settings();
+    const QString key = s.value(QStringLiteral("ui/theme"), QStringLiteral("system")).toString();
+    return themeModeFromKey(key, ThemeMode::system);
+}
+
+/**
+ * @brief 保存界面主题模式。
+ * @param[in] mode ThemeMode，目标模式；落盘时经 themeModeKey() 转为英文键名。
+ * @return 无。
+ * @note 立即 sync() 落盘：主题是"改完就该记住"的偏好，不应因进程被强制结束而丢失。
+ */
+void setThemeMode(ThemeMode mode)
+{
+    QSettings s = settings();
+    s.setValue(QStringLiteral("ui/theme"), themeModeKey(mode));
+    s.sync();
+}
+
 } // namespace AppConfig

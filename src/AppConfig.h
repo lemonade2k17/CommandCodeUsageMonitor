@@ -224,4 +224,62 @@ QString statusMetricKey(StatusMetric metric);
  * @return StatusMetric，还原结果。
  */
 StatusMetric statusMetricFromKey(const QString &key, StatusMetric fallback);
+// ---------------------------------------------------------------------------
+//  外观主题
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief 界面外观主题模式。
+ *
+ * 三档中「跟随系统」为出厂默认：多数用户希望程序与系统设置保持一致；
+ * 需要固定观感的用户可显式选择浅色或深色。
+ */
+enum class ThemeMode
+{
+    light = 0,    ///< 强制浅色主题
+    dark = 1,     ///< 强制深色主题
+    system = 2,   ///< 跟随系统配色（默认）
+};
+
+/**
+ * @brief 读取界面主题模式。
+ *
+ * 键名固定为 ui/theme。本函数只回答"用户选了哪一档"，不解析"系统当前是深是浅"
+ * ——后者属于界面层判定（见 AppTheme::isDark()），配置层因此不引入任何 GUI 依赖。
+ *
+ * @return ThemeMode，当前模式；键缺失或取值非法时回退为 system（跟随系统）。
+ * @note 每次调用重新读取配置文件，因此设置对话框改完模式后无需重启程序。
+ */
+ThemeMode themeMode();
+
+/**
+ * @brief 保存界面主题模式。
+ *
+ * @param[in] mode ThemeMode，目标模式；落盘时经 themeModeKey() 转为英文键名。
+ * @return 无。
+ * @note 立即 sync() 落盘，避免用户改完主题后进程被强制结束而丢失选择。
+ */
+void setThemeMode(ThemeMode mode);
+
+/**
+ * @brief 把主题模式转成可持久化的英文键名。
+ *
+ * @param[in] mode ThemeMode，待转换的模式。
+ * @return QString，形如 "light" / "dark" / "system"。
+ * @note 枚举被扩展却漏补分支时返回 "system"，即"最保守"的一档，
+ *       避免把新枚举静默写成 light 而让用户看到意料之外的外观。
+ */
+QString themeModeKey(ThemeMode mode);
+
+/**
+ * @brief 把持久化键名还原成主题模式。
+ *
+ * 非法值（手工改坏配置、从更新版本回退）与缺失值走同一条回退路径，
+ * 保证任何情况下都能得到一个合法模式。
+ *
+ * @param[in] key QString，从 ui/theme 读到的键名；可能为空或未识别。
+ * @param[in] fallback ThemeMode，无法识别时使用的兜底模式，由调用方指定。
+ * @return ThemeMode，识别成功时返回对应模式，否则原样返回 fallback。
+ */
+ThemeMode themeModeFromKey(const QString &key, ThemeMode fallback);
 } // namespace AppConfig

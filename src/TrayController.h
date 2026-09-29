@@ -30,16 +30,16 @@ class QAction;
 // ---------------------------------------------------------------------------
 struct TrayStatus
 {
-    bool    valid = false;      ///< 是否已有一次成功的数据；false 时图标显示占位态
-    QString metricName;         ///< 所选指标名称，如「5 小时限额」「每周限额」「剩余额度」
-    int     metricPercent = 0;  ///< 所选指标的占用百分比（0~100），用于配色与进度条
-    QString metricText;         ///< 绘制在图标上的缩略文字，如 "15%"（长度建议 ≤ 4 字符）
-    QString planName;           ///< 套餐显示名，如「GOAT」
-    double  remaining = 0.0;    ///< 本周期剩余额度
-    double  total = 0.0;        ///< 套餐总额度
-    QString detailText;         ///< 所选指标的明细，如「已用 2.24 / 14　重置还剩 2h 39m」
-    QString updatedText;        ///< 最后刷新时间文本，如 "14:35:02"
-    QStringList errors;         ///< 上次刷新的错误列表，非空时提示里会附上
+    bool valid = false;     ///< 是否已有一次成功的数据；false 时图标显示占位态
+    QString metricName;     ///< 所选指标名称，如「5 小时限额」「每周限额」「剩余额度」
+    int metricPercent = 0;  ///< 所选指标的占用百分比（0~100），用于配色与进度条
+    QString metricText;     ///< 绘制在图标上的缩略文字，如 "15%"（长度建议 ≤ 4 字符）
+    QString planName;       ///< 套餐显示名，如「GOAT」
+    double remaining = 0.0; ///< 本周期剩余额度
+    double total = 0.0;     ///< 套餐总额度
+    QString detailText;     ///< 所选指标的明细，如「已用 2.24 / 14　重置还剩 2h 39m」
+    QString updatedText;    ///< 最后刷新时间文本，如 "14:35:02"
+    QStringList errors;     ///< 上次刷新的错误列表，非空时提示里会附上
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +92,19 @@ public:
     bool isVisible() const;
 
     /**
+     * @brief 询问"关闭窗口时的气泡提示"是否已经弹过。
+     *
+     * 主窗口的 closeEvent() 用它实现"每次运行只提示一次"：首次关闭并隐藏到托盘时
+     * 弹一条气泡告知用户程序没退出，之后不再打扰。
+     * 注意语义边界：本标志位**只存在于内存、不写入配置文件**，因此程序重启后的
+     * 第一次关闭会重新提示一次；若将来需要"装一次只提示一次"，应把它挪进 AppConfig。
+     *
+     * @return bool，true 表示本次运行已经**发起过**气泡请求（不代表系统真的显示出来了）。
+     * @note 与 isVisible() 无关：前者回答"图标可见吗"，本函数回答"气泡请求发过了吗"。
+     */
+    bool isBubbleShown() const;
+
+    /**
      * @brief 显示或隐藏托盘图标。
      *
      * 用户可在设置里关闭该功能；关闭时会立即隐藏图标但保留对象，以便随时再次开启。
@@ -102,6 +115,22 @@ public:
      * @note 显示时会同时应用最近一次 setStatus() 的内容；尚无数据时显示占位图标。
      */
     void setEnabled(bool enabled);
+
+    /**
+     * @brief 记录"关闭窗口时的气泡请求"已经发出（置位后本次运行不再发）。
+     *
+     * 刻意做成独立的 setter，而不是让 showMessage() 自己置位：气泡"是否已经发过"
+     * 属于调用方的业务语义（主窗口的关闭流程），不是通知机制本身的属性；
+     * 将来同一套气泡用于别的场景时，不会被这里的"只发一次"规则绑住。
+     *
+     * @param[in] shown bool，true 表示已发出过；传 false 可重置该状态
+     *                （为将来可能出现的"重新提示"入口预留）。
+     * @return 无。
+     * @note 只改内存标志位，不做任何系统调用，可在关闭流程中安全反复调用。
+     * @note 语义是"已发起"而非"已显示"：showMessage() 即发即忘、拿不到投递结果，
+     *       所以调用方必须在发起后立刻置位，而不是等待一个并不存在的回执。
+     */
+    void setBubbleShown(bool shown);
 
     /**
      * @brief 用最新数据刷新图标、悬停提示与菜单标题。
@@ -182,11 +211,12 @@ private:
     /** @brief 重建悬停提示文本（套餐、剩余额度、指标明细、更新时间与错误）。 @return 无。 */
     void rebuildTooltip();
 
-    QSystemTrayIcon *m_tray = nullptr;   ///< 托盘图标本体（构造时创建，生命周期随本对象）
-    QMenu           *m_menu = nullptr;   ///< 右键菜单
-    QAction         *m_headerAction = nullptr;  ///< 菜单顶部不可点击的摘要行
-    TrayStatus       m_status;           ///< 最近一次数据
-    QString          m_lastDrawnText;    ///< 上次绘制用的文字，用于跳过重复重绘
-    QColor           m_lastDrawnColor;   ///< 上次绘制用的底色，用于跳过重复重绘
-    bool             m_enabled = false;  ///< 用户是否开启了托盘图标
+    QSystemTrayIcon *m_tray = nullptr; ///< 托盘图标本体（构造时创建，生命周期随本对象）
+    QMenu *m_menu = nullptr;           ///< 右键菜单
+    QAction *m_headerAction = nullptr; ///< 菜单顶部不可点击的摘要行
+    TrayStatus m_status;               ///< 最近一次数据
+    QString m_lastDrawnText;           ///< 上次绘制用的文字，用于跳过重复重绘
+    QColor m_lastDrawnColor;           ///< 上次绘制用的底色，用于跳过重复重绘
+    bool m_enabled = false;            ///< 用户是否开启了托盘图标
+    bool m_bubbleShown = false;        ///< 是否已**发起过**关闭气泡（不代表系统真的显示出来；每次运行只弹一次，不持久化）
 };

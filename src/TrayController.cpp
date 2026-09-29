@@ -35,24 +35,25 @@
 
 // 匿名命名空间（anonymous namespace）：把下面的常量与配色限制在本翻译单元内。
 // 这样做一是不污染全局符号表，二是防止其它源文件误用到"托盘专用"的画布尺寸。
-namespace {
+namespace
+{
 
-// 托盘图标画布边长（像素）。
-// 之所以用 64 而不是 16：Windows 会把位图缩放到 16/24/32 像素，画布越大、
-// 下采样时的采样点越多，文字边缘越平滑；直接用 16 像素画会明显锯齿。
-constexpr int trayCanvasSize = 64;
+    // 托盘图标画布边长（像素）。
+    // 之所以用 64 而不是 16：Windows 会把位图缩放到 16/24/32 像素，画布越大、
+    // 下采样时的采样点越多，文字边缘越平滑；直接用 16 像素画会明显锯齿。
+    constexpr int trayCanvasSize = 64;
 
-// 与主界面保持一致的三档语义色：正常 / 接近上限 / 已超限。
-// 之所以在实现文件里再定义一份、而不是每处现算：配色属于"展示策略"，
-// 集中一处才能保证托盘图标、菜单与主界面三者的观感同步变化。
-const QColor colorOk(0x2E, 0xA0, 0x62);      // 绿：占用 < 60%
-const QColor colorWarn(0xE8, 0xA3, 0x3D);    // 琥珀：60% ≤ 占用 < 85%
-const QColor colorDanger(0xE0, 0x4B, 0x4B);  // 红：占用 ≥ 85%
+    // 与主界面保持一致的三档语义色：正常 / 接近上限 / 已超限。
+    // 之所以在实现文件里再定义一份、而不是每处现算：配色属于"展示策略"，
+    // 集中一处才能保证托盘图标、菜单与主界面三者的观感同步变化。
+    const QColor colorOk(0x2E, 0xA0, 0x62);     // 绿：占用 < 60%
+    const QColor colorWarn(0xE8, 0xA3, 0x3D);   // 琥珀：60% ≤ 占用 < 85%
+    const QColor colorDanger(0xE0, 0x4B, 0x4B); // 红：占用 ≥ 85%
 
-// 无数据时的占位底色。
-// 刻意选中性灰而不是绿色：绿色会被用户读成"用量正常"，
-// 而此刻的真实语义是"还没有拿到数据"，二者必须区分开。
-const QColor colorIdle(0x8A, 0x8A, 0x8A);
+    // 无数据时的占位底色。
+    // 刻意选中性灰而不是绿色：绿色会被用户读成"用量正常"，
+    // 而此刻的真实语义是"还没有拿到数据"，二者必须区分开。
+    const QColor colorIdle(0x8A, 0x8A, 0x8A);
 
 } // namespace
 
@@ -116,7 +117,8 @@ TrayController::TrayController(QObject *parent)
     // 匿名 lambda 只出现在本 .cpp 内，头文件因此无需包含 QSystemTrayIcon 的完整定义，
     // 减小了编译耦合（平台相关头文件不外泄）。
     connect(m_tray, &QSystemTrayIcon::activated, this,
-            [this](QSystemTrayIcon::ActivationReason reason) {
+            [this](QSystemTrayIcon::ActivationReason reason)
+            {
                 // 只响应"单击"与"双击"两种激活方式：
                 // MiddleClick/Context 等其余取值在 Windows 上语义不稳定，不予处理，
                 // 避免用户误触中键就弹出窗口。
@@ -205,6 +207,21 @@ bool TrayController::isVisible() const
 }
 
 /**
+ * @brief 查询"关闭窗口时的气泡提示"是否已经弹过。
+ *
+ * 只读取内存标志位，不向系统查询气泡的真实显示结果：勿扰模式、通知权限都可能让
+ * 气泡根本不出现，而这一点无法从 Qt 侧同步获知。正因如此，调用方应在**发起提示后
+ * 立刻置位**（见 MainWindow::closeEvent()），而不是等一个并不存在的"已显示"回执。
+ *
+ * @return bool，true 表示本次运行已经**发起过**气泡请求（不代表系统真的把它显示出来了）。
+ * @note 纯读取、无副作用，可在关闭流程中被反复调用。
+ */
+bool TrayController::isBubbleShown() const
+{
+    return m_bubbleShown;
+}
+
+/**
  * @brief 显示或隐藏托盘图标（对应设置里的开关）。
  *
  * 关闭时只隐藏、不销毁对象，因此再次开启无需重新接线，状态（上次数据）也得以保留。
@@ -224,7 +241,8 @@ void TrayController::setEnabled(bool enabled)
 
     // 先落状态再干活：即使后面的 show()/hide() 出错，成员状态也与用户意图一致。
     m_enabled = enabled;
-    if (enabled) {
+    if (enabled)
+    {
         // 显示前强制重绘一次，防止上一次关闭时留下的旧内容被复用。
         // 清空缓存文字等价于"缓存失效"，从而让 setStatus() 内部的比较必然不相等。
         m_lastDrawnText.clear();
@@ -238,20 +256,36 @@ void TrayController::setEnabled(bool enabled)
         // 外壳的注册条目可能要等图标真正注册后才落盘，因此这里先试一次，
         // 失败再安排一次 2 秒后的重试；两次都拿不到条目就放弃，属预期内的降级，
         // 图标本身仍会在溢出区里可用，用户手动提升同样有效。
-        if (!promoteToVisibleTrayArea()) {
+        if (!promoteToVisibleTrayArea())
+        {
             // 重试挂在定时器上而不是循环等待：绝不阻塞创建托盘的调用方，
             // 2 秒是"外壳完成图标注册"的宽限量级，通常首次尝试就已成功。
-            QTimer::singleShot(2000, this, [this]() {
+            QTimer::singleShot(2000, this, [this]()
+                               {
                 // 重试前核对开关仍然开启：若用户在这 2 秒里关掉了托盘，
                 // 就不应再为已经隐藏的图标做任何注册表改动。
                 if (m_enabled)
-                    promoteToVisibleTrayArea();
-            });
+                    promoteToVisibleTrayArea(); });
         }
-    } else {
+    }
+    else
+    {
         // 只隐藏不销毁：保留对象与已注册的菜单，随时可以零成本再次开启。
         m_tray->hide();
     }
+}
+
+/**
+ * @brief 记录"关闭窗口时的气泡提示"已弹过（置位后本次运行不再弹）。
+ *
+ * @param[in] shown bool，true 表示已提示过；传 false 可重置该状态。
+ * @return 无。
+ * @note 只改内存标志位、不落盘，因此程序重启后的第一次关闭会重新提示一次；
+ *       若将来需要"装一次只提示一次"，应把该状态挪进 AppConfig。
+ */
+void TrayController::setBubbleShown(bool shown)
+{
+    m_bubbleShown = shown;
 }
 
 /**
@@ -278,7 +312,8 @@ bool TrayController::promoteToVisibleTrayArea()
     QSettings notifyIcons(QStringLiteral("HKEY_CURRENT_USER\\Control Panel\\NotifyIconSettings"),
                           QSettings::NativeFormat);
     const QStringList groups = notifyIcons.childGroups();
-    for (const QString &group : groups) {
+    for (const QString &group : groups)
+    {
         // 逐个子项读 ExecutablePath 并与本程序比对；其它程序的条目一律不碰，
         // 这是把"提升自己"限定在"自己的图标"上的唯一判据。
         const QString entryPath = notifyIcons.value(group + QStringLiteral("/ExecutablePath")).toString();
@@ -335,7 +370,8 @@ void TrayController::setStatus(const TrayStatus &status)
     // QPixmap → HICON 的转换，属于相对昂贵的操作。
     // 用量刷新多以秒计，绝大多数刷新周期的文字与颜色是完全相同的，
     // 靠这一层比较即可把绝大部分重绘省掉，同时不影响正确性。
-    if (text != m_lastDrawnText || color != m_lastDrawnColor) {
+    if (text != m_lastDrawnText || color != m_lastDrawnColor)
+    {
         // 先更新缓存再绘制：即使绘制过程中被再次进入，缓存也已经是新值，
         // 不会出现"画了新内容却仍记着旧内容"的不一致。
         m_lastDrawnText = text;
@@ -349,9 +385,7 @@ void TrayController::setStatus(const TrayStatus &status)
     // 与位图不同，这两处不设缓存：字符串比较本身的成本与直接重建相当，
     // 加缓存反而增加状态、得不偿失。
     m_headerAction->setText(status.valid
-                                ? QStringLiteral("%1　%2 %3").arg(status.planName,
-                                                                  status.metricName,
-                                                                  status.metricText)
+                                ? QStringLiteral("%1　%2 %3").arg(status.planName, status.metricName, status.metricText)
                                 : QStringLiteral("尚未获取到数据"));
     rebuildTooltip();
 }
@@ -374,12 +408,12 @@ void TrayController::showMessage(const QString &title, const QString &message, b
     // 未开启托盘时直接返回：既避免向系统提交无人接收的通知，
     // 也避免在没有图标的情况下产生一条"孤儿气泡"。
     if (!m_enabled)
-        return;   // 用户没开托盘时不打扰
+        return; // 用户没开托盘时不打扰
     // 图标类型按调用方给出的严重级别二选一：本类不自行推断，
     // 以免把"信息"误升格为"警告"而制造焦虑。
     m_tray->showMessage(title, message,
                         warning ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information,
-                        5000);   // 5 秒后自动消失，和系统通知的常见时长保持一致
+                        5000); // 5 秒后自动消失，和系统通知的常见时长保持一致
     // 采用超时自动消失而非等待用户点击：用量提示属于背景信息，
     // 不应要求用户做出任何"确认"动作。
 }
@@ -473,9 +507,10 @@ QPixmap TrayController::makeTrayPixmap(const QString &text, const QColor &backgr
     // 档位只负责常规情形下的字号稳定。
     // 垂直方向无需兜底：档位上限 44px（≤2 字符档）的字形高远小于 60px 方块高，
     // 上下余量由档位上限自然保证。
-    const int maxTextWidth = trayCanvasSize - 12;   // 左右各留 6px 安全边距
+    const int maxTextWidth = trayCanvasSize - 12; // 左右各留 6px 安全边距
     QFontMetrics metrics(font);
-    while (metrics.horizontalAdvance(text) > maxTextWidth && pixelSize > 14) {
+    while (metrics.horizontalAdvance(text) > maxTextWidth && pixelSize > 14)
+    {
         pixelSize -= 2;
         font.setPixelSize(pixelSize);
         metrics = QFontMetrics(font);
@@ -514,7 +549,8 @@ void TrayController::rebuildTooltip()
 
     // 无数据分支单独处理：此时除标题外没有可信字段可展示，
     // 用固定两行文案给出明确结论，好过拼接出一堆空白字段。
-    if (!m_status.valid) {
+    if (!m_status.valid)
+    {
         m_tray->setToolTip(QStringLiteral("Command Code 套餐用量\n尚未获取到数据"));
         return;
     }

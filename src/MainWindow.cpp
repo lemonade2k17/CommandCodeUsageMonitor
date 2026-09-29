@@ -32,6 +32,8 @@
 // 本类声明
 #include "MainWindow.h"
 
+#include "AppTheme.h"
+
 // 持久化配置：API Key / base-url / 自动刷新间隔的唯一权威来源
 #include "AppConfig.h"
 // 用量抓取客户端：本文件只连接其信号，不直接触碰网络层
@@ -62,32 +64,34 @@
 // ===========================================================================
 //  本文件私有的辅助设施：不导出符号，仅供本翻译单元内的界面逻辑使用
 // ===========================================================================
-namespace {
-
-/**
- * @brief 返回"北京时间"对应的时区对象。
- *
- * 状态栏的「下次刷新」时刻按北京时间展示：优先解析 IANA 名称 Asia/Shanghai，
- * 拿到完整的时区规则；解析失败（极少数精简系统缺时区数据）时退回固定
- * UTC+8 偏移——北京时间不实行夏令时，固定偏移在本场景下同样正确。
- *
- * @return QTimeZone，可直接用于 QDateTime::toTimeZone 的时区对象。
- * @note 结果以函数级静态变量缓存：QTimeZone 的构造需要查询系统时区数据库，
- *       而本函数处在每秒一次的心跳路径上，缓存可省去重复解析的开销。
- */
-QTimeZone beijingTimeZone()
+namespace
 {
-    // C++11 起函数级 static 初始化线程安全；本程序全部逻辑在主线程，更无竞争
-    static const QTimeZone cached = []() {
-        // IANA 名称由 Qt 在 Windows 上经系统时区机制解析；构造函数收 QByteArray 形式的时区 ID
-        const QTimeZone iana(QStringLiteral("Asia/Shanghai").toLatin1());
-        if (iana.isValid())
-            return iana;
-        // 兜底：固定偏移 +8 小时（28800 秒），语义即"东八区标准时间"
-        return QTimeZone(8 * 3600);
-    }();
-    return cached;
-}
+
+    /**
+     * @brief 返回"北京时间"对应的时区对象。
+     *
+     * 状态栏的「下次刷新」时刻按北京时间展示：优先解析 IANA 名称 Asia/Shanghai，
+     * 拿到完整的时区规则；解析失败（极少数精简系统缺时区数据）时退回固定
+     * UTC+8 偏移——北京时间不实行夏令时，固定偏移在本场景下同样正确。
+     *
+     * @return QTimeZone，可直接用于 QDateTime::toTimeZone 的时区对象。
+     * @note 结果以函数级静态变量缓存：QTimeZone 的构造需要查询系统时区数据库，
+     *       而本函数处在每秒一次的心跳路径上，缓存可省去重复解析的开销。
+     */
+    QTimeZone beijingTimeZone()
+    {
+        // C++11 起函数级 static 初始化线程安全；本程序全部逻辑在主线程，更无竞争
+        static const QTimeZone cached = []()
+        {
+            // IANA 名称由 Qt 在 Windows 上经系统时区机制解析；构造函数收 QByteArray 形式的时区 ID
+            const QTimeZone iana(QStringLiteral("Asia/Shanghai").toLatin1());
+            if (iana.isValid())
+                return iana;
+            // 兜底：固定偏移 +8 小时（28800 秒），语义即"东八区标准时间"
+            return QTimeZone(8 * 3600);
+        }();
+        return cached;
+    }
 
 } // namespace
 
@@ -148,7 +152,8 @@ MainWindow::MainWindow(QWidget *parent)
     // 之所以放在 buildUi() 之后：唤出窗口的动作会调用 showNormal()，必须保证那时
     // 控件树已经完整，否则用户会看到一闪而过的半成品窗口。
     m_tray = new TrayController(this);
-    connect(m_tray, &TrayController::showWindowRequested, this, [this]() {
+    connect(m_tray, &TrayController::showWindowRequested, this, [this]()
+            {
         // 从托盘唤出窗口：先恢复常规显示，再提升到前台，避免被其它窗口压在下面
         // 三步缺一不可：showNormal() 负责从"隐藏 / 最小化"两种状态恢复，raise() 调整
         // Z 序，activateWindow() 再把键盘焦点抢过来；只做第一步时，Windows 常常只让
@@ -157,8 +162,7 @@ MainWindow::MainWindow(QWidget *parent)
         // updateDesktopIndicators() 在每次抓取后统一维护，唤出动作不该引出第二份数据源。
         // 直接复用公开方法 restoreFromTray()，使"托盘双击唤出"与"第二个实例唤回"
         // 走完全相同的三步，避免两处实现将来各自漂移。
-        restoreFromTray();
-    });
+        restoreFromTray(); });
     // 刷新与设置直接连到已有的槽，而不额外包一层 lambda：托盘菜单与窗口顶部按钮
     // 走完全相同的代码路径，行为天然一致，也避免同一逻辑出现两处实现。
     connect(m_tray, &TrayController::refreshRequested, this, &MainWindow::refreshNow);
@@ -276,19 +280,38 @@ void MainWindow::closeEvent(QCloseEvent *event)
     //   ③ closeToTray()：用户在设置里勾选过"关闭时最小化到托盘"，隐藏符合其预期。
     // 只要②或③不成立，窗口一旦 hide() 就会"既看不见、也召不回"，因此宁可按默认行为
     // 退出，也不去制造一个没有任何入口的后台进程。
-    if (!m_forceQuit && m_tray && m_tray->isEnabled() && AppConfig::closeToTray()) {
+    if (!m_forceQuit && m_tray && m_tray->isEnabled() && AppConfig::closeToTray())
+    {
         // 先 hide() 再 ignore()：ignore() 只负责撤销本次关闭，把窗口藏起来这件事
         // 仍要显式调用 hide()；若只 ignore() 而不 hide()，窗口会原地不动，
         // 用户会以为"点了关闭却没反应"。
         hide();
         // 忽略本次关闭：窗口只是藏起来，进程继续在托盘里监控用量
         event->ignore();
-        // 气泡提示只在隐藏的这一刻弹一次，且是非阻塞的（第三个参数 false）：
-        // 用户可以立刻回去工作，不必先确认这个提示。
-        // 文案里特意写出"从托盘菜单选择退出"，是为了当场消解"程序退不掉了吗"的疑虑。
-        m_tray->showMessage(tr("仍在后台运行"),
-                            tr("已最小化到通知区域。找不到托盘图标时：再运行一次本程序唤回窗口，"
-                               "或用「程序路径 --quit」结束进程。"), false);
+        // 关闭时弹一次气泡提示，且**每次运行只弹一次**（标志位记在 TrayController 内）：
+        //   · 为什么第一次要弹：勾选"关闭时最小化到托盘"的用户多半刚用上这个功能，
+        //     此刻最需要知道"窗口没退出、点托盘图标能叫回来"，弹一次即完成告知；
+        //   · 为什么只弹一次：窗口被关闭按钮截留、自己藏起来，这件事本身已足以说明
+        //     "窗口没退出"；每次关闭都弹会变成对频繁开关窗口者的反复打扰；
+        //   · 发出去就不管：QSystemTrayIcon::showMessage() 是"即发即忘"的——它不返回
+        //     投递结果，本程序也无从探测勿扰模式 / 通知权限是否把气泡吃掉了。
+        //     因此这里既不做显示结果检测，也不补弹：补弹一次比漏弹更烦人。
+        //   · 作用域限本次运行：标志位只在内存里，程序重启后的第一次关闭会再提示一次
+        //     （"装一次只提示一次"需要把该状态落进配置文件，目前刻意没这么做）。
+        if (!m_tray->isBubbleShown())
+        {
+            // 标题用简短的「通知」：Windows 会在气泡上方自动显示应用名，标题再写产品名会重复。
+            m_tray->TrayController::showMessage(tr("通知"),
+                                                tr("窗口已隐藏到托盘，点击托盘图标可唤回"),
+                                                false);
+            // 无论系统是否真的把气泡画出来都立即置位：否则在"通知被系统关闭"的机器上，
+            // 每次关闭都会重复走一遍这条分支，白做一次通知调用。
+            m_tray->setBubbleShown(true);
+        }
+        // 走到这里：窗口已隐藏、关闭事件已撤销，进程继续留在托盘里监控用量。
+        // 与上面气泡的关系：提示只在**首次**关闭时弹一次，之后静默隐藏；
+        // "找不到托盘图标时怎么办"的两条退路（再运行一次唤回窗口 / 命令行 --quit）
+        // 另见「设置 → 桌面集成」里的逃生说明与 README 的对应章节。
         return;
     }
     // 走到这里说明"隐藏到托盘"的前提不成立：托盘不可用、用户没开托盘、或没勾关闭到
@@ -494,11 +517,12 @@ void MainWindow::buildUi()
     // 返回值是可直接 addLayout 的纵向布局。三块限流区共用该工厂，保证版式完全一致：
     // 若要调整限流区的排版，只改这一处即可，不必在三个区块里重复修改。
     const auto makeLimitBlock = [](const QString &name, SegmentedBar **barOut,
-                                   QLabel **percentOut, QLabel **resetOut) -> QVBoxLayout * {
+                                   QLabel **percentOut, QLabel **resetOut) -> QVBoxLayout *
+    {
         // 每个限流块自带纵向布局，内部行距 6px
         auto *box = new QVBoxLayout;
         box->setSpacing(6);
-        box->addStretch(1);          // 卡片随窗口长高后，整块垂直居中而不是堆在顶部
+        box->addStretch(1); // 卡片随窗口长高后，整块垂直居中而不是堆在顶部
         // 标题行：左侧名称、右侧百分比，中间用弹簧撑开
         auto *head = new QHBoxLayout;
         auto *nameLabel = new QLabel(name);
@@ -546,31 +570,13 @@ void MainWindow::buildUi()
     m_errors->hide();
     root->addWidget(m_errors);
 
-    // 全局样式表统一放在最后设置，确保上面所有 objectName 都已就绪、一次生效。
-    // 各选择器含义：#appTitle / #bigValue / #limitName / #limitPercent 负责字号与字重，
-    // #muted 统一次要信息的灰字，#account 与 #status 用调色板中间色跟随系统主题，
-    // #errors 固定为警示红，#banner 提供内边距与圆角（底色由 showBanner() 逐次覆盖），
-    // #card 绘制卡片底色、描边与 10px 圆角，#cardTitle 是卡片标题的小号灰字。
-    // 使用调色板变量而非硬编码颜色，是为了让界面自动适配明暗主题。
-    // 样式表在此一次性下发到中央部件，其所有子控件都会继承这些规则；
-    // 若后续新增控件，只需给它起一个已在表中登记的 objectName 即可复用现有样式。
-    central->setStyleSheet(QStringLiteral(R"(
-        QLabel#appTitle { font-size: 17px; font-weight: 600; }
-        QLabel#account { color: palette(mid); }
-        QLabel#status  { color: palette(mid); }
-        QLabel#bigValue { font-size: 24px; font-weight: 600; }
-        QLabel#muted { color: palette(mid); }
-        QLabel#limitName { font-weight: 600; }
-        QLabel#limitPercent { font-weight: 600; }
-        QLabel#errors { color: #C0392B; }
-        QLabel#banner { padding: 8px 12px; border-radius: 6px; }
-        QFrame#card {
-            background: palette(base);
-            border: 1px solid palette(mid);
-            border-radius: 10px;
-        }
-        QLabel#cardTitle { color: palette(mid); font-size: 11px; font-weight: 600; }
-    )"));
+    // 全局样式表不在此处下发：它由 AppTheme 依据当前生效主题生成，并挂在
+    // QApplication 上（见 AppTheme::applyInternal()）。之所以不再挂到中央部件：
+    //   ① 主题切换需要一次性重算所有控件的配色，样式表挂在应用上时 Qt 会自动
+    //      重新抛光全部控件，动态属性（level）驱动的颜色也随之更新；
+    //   ② 设置对话框等其它顶层窗口不在中央部件的子树里，挂在中央部件上覆盖不到。
+    // 本函数只需保证各控件都起了样式表中登记的 objectName（见上文各处 setObjectName），
+    // 具体色值一律由调色板给出，界面代码中不再出现任何写死的颜色。
 }
 
 /**
@@ -693,7 +699,8 @@ void MainWindow::startInitialRefresh()
     m_api->setBaseUrl(effectiveBaseUrl());
 
     // 注意用客户端自身的是否有 Key 判断，因为它已经合并了命令行覆盖
-    if (!m_api->hasApiKey()) {
+    if (!m_api->hasApiKey())
+    {
         showBanner(tr("尚未配置 API Key。点击右上角「设置」填写，或从本机 Command Code CLI 配置导入。"),
                    true, /*sticky=*/true);
         m_status->setText(tr("等待配置"));
@@ -719,7 +726,8 @@ void MainWindow::openSettings()
 {
     // 模态对话框：期间主窗口不可交互，避免用户在保存过程中触发刷新
     SettingsDialog dialog(this);
-    if (dialog.exec() == QDialog::Accepted) {
+    if (dialog.exec() == QDialog::Accepted)
+    {
         // 用户在设置里保存过配置，命令行覆盖随之失效
         m_keyOverride.clear();
         m_baseUrlOverride = QUrl();
@@ -756,7 +764,8 @@ void MainWindow::openSettings()
             show();
 
         // 首次配置成功的场景：给一次明确反馈，并立刻拉一次数据
-        if (!hadKey && m_api->hasApiKey()) {
+        if (!hadKey && m_api->hasApiKey())
+        {
             showBanner(tr("API Key 已保存，正在刷新…"), false);
             // 暂时停掉自动刷新，避免与下面的手动刷新在短时间内重复请求
             m_refreshTimer->stop();
@@ -764,7 +773,9 @@ void MainWindow::openSettings()
             // 目标时刻同步作废：此刻的显示交给随后的 refreshNow() 重新排程后给出
             m_nextRefreshAt = QDateTime();
             refreshNow();
-        } else {
+        }
+        else
+        {
             // 其余情况（改地址、改间隔）只需刷新一次即可看到新结果
             refreshNow();
         }
@@ -785,7 +796,8 @@ void MainWindow::openSettings()
 void MainWindow::refreshNow()
 {
     // 无 Key 直接放弃：发出去的请求必然 401，徒增错误提示
-    if (effectiveApiKey().isEmpty()) {
+    if (effectiveApiKey().isEmpty())
+    {
         showBanner(tr("尚未配置 API Key。点击右上角「设置」填写，或从本机 Command Code CLI 配置导入。"),
                    true, /*sticky=*/true);
         return;
@@ -798,14 +810,17 @@ void MainWindow::refreshNow()
     // 每次刷新都重置计时器，等价于「以最后一次刷新为起点」重新计时，
     // 因此手动刷新会顺延自动刷新的时刻，不会出现刚点完就到点的尴尬。
     const int seconds = AppConfig::refreshSeconds();
-    if (seconds > 0) {
+    if (seconds > 0)
+    {
         m_refreshTimer->start(seconds * 1000);
         m_secondsToRefresh = seconds;
         // 记录下一次刷新的目标时刻：以"本次刷新发起时"为基准，之后每秒心跳只读不写，
         // 因此状态栏显示的是一个稳定的目标时刻，不会随倒计时逐秒抖动；
         // 每次刷新发起都会走到这里，"刷新后时刻随之更新"由这一行天然保证
         m_nextRefreshAt = QDateTime::currentDateTime().addSecs(seconds);
-    } else {
+    }
+    else
+    {
         // 间隔为 0 表示用户关闭了自动刷新
         m_refreshTimer->stop();
         m_secondsToRefresh = 0;
@@ -833,9 +848,12 @@ void MainWindow::setBusy(bool busy)
 {
     // 取反：忙碌时禁用（false），空闲时启用（true）
     m_refreshButton->setEnabled(!busy);
-    if (busy) {
+    if (busy)
+    {
         m_status->setText(tr("正在刷新…"));
-    } else {
+    }
+    else
+    {
         // 抓取刚结束，立即把状态栏从「正在刷新…」切回倒计时
         updateCountdown();
     }
@@ -856,10 +874,12 @@ void MainWindow::setBusy(bool busy)
 void MainWindow::onTick()
 {
     // 仅在自动刷新启用时（秒数 > 0）做递减
-    if (m_secondsToRefresh > 0) {
+    if (m_secondsToRefresh > 0)
+    {
         --m_secondsToRefresh;
         // 归零说明定时器已触发刷新，此时以状态栏倒计时为准，直接返回即可
-        if (m_secondsToRefresh <= 0) {
+        if (m_secondsToRefresh <= 0)
+        {
             updateCountdown();
             return;
         }
@@ -867,7 +887,8 @@ void MainWindow::onTick()
     // 倒计时之外，重置时间文案也要随时间跳动
     updateCountdown();
     // 以 5 小时窗口的 hasReset 作为整组是否有效的判据：两个窗口通常同时有数据
-    if (m_fiveHourReset && m_fiveHourReset->property("hasReset").toBool()) {
+    if (m_fiveHourReset && m_fiveHourReset->property("hasReset").toBool())
+    {
         // 重置时刻由 applySnapshot() 写入动态属性，这里只负责按当前时间重算文案
         m_fiveHourReset->setText(formatCountdown(m_fiveHourReset->property("resetAt").toDateTime()));
         m_weeklyReset->setText(formatCountdown(m_weeklyReset->property("resetAt").toDateTime()));
@@ -895,7 +916,8 @@ void MainWindow::updateCountdown()
     if (m_refreshButton->isEnabled() == false)
         return;
     // 仅在已排程下一次自动刷新时展示（间隔为 0 或尚未排程则维持现状）
-    if (m_secondsToRefresh > 0 && m_nextRefreshAt.isValid()) {
+    if (m_secondsToRefresh > 0 && m_nextRefreshAt.isValid())
+    {
         // 先把目标时刻换算到北京时区，再决定格式与文案
         const QTimeZone beijing = beijingTimeZone();
         const QDateTime beijingTime = m_nextRefreshAt.toTimeZone(beijing);
@@ -929,12 +951,11 @@ void MainWindow::showBanner(const QString &text, bool warning, bool sticky)
     // 记录常驻标志，供 applySnapshot() 决定是否自动隐藏
     m_bannerSticky = sticky;
     m_banner->setText(text);
-    // 警示与成功两套配色在此就地指定；圆角与内边距仍由全局样式表的 #banner 提供
-    // 之所以不走样式表选择器：横幅只有两种互斥状态，就地覆盖比在样式表里
-    // 维护两组动态属性选择器更直观，也不会影响其它 QLabel 的配色。
-    m_banner->setStyleSheet(warning
-                                ? QStringLiteral("background: #FFF4E5; color: #8A5300; border: 1px solid #F0C36D;")
-                                : QStringLiteral("background: #E8F5E9; color: #1B5E20; border: 1px solid #A5D6A7;"));
+    // 配色交由样式表按语义级别决定：level=warn 走警示配色、level=ok 走成功配色，
+    // 两套色值都来自当前主题调色板。这样做的关键收益是"主题切换后横幅自动换色"——
+    // 若仍用就地 setStyleSheet() 写死色值，切到深色主题时横幅会残留浅色主题的配色，
+    // 出现"浅色横幅上的深色字"或反之的错配。
+    AppTheme::setLevel(m_banner, warning ? QStringLiteral("warn") : QStringLiteral("ok"));
     // 样式与文本就绪后再显示，避免出现一次无样式的闪烁
     m_banner->show();
 }
@@ -1080,7 +1101,8 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 约定：快照中每个子结构体都自带 valid 标志，只有 valid 为 true 才认为其字段可信；
     // 无效数据一律以「—」或 0 呈现，既不猜测也不清空上一次的展示结果。
     // 只有 whoami 有效时才更新账号标签，避免失败请求把已有账号信息抹掉
-    if (snapshot.whoami.valid) {
+    if (snapshot.whoami.valid)
+    {
         QString who = snapshot.whoami.userName;
         // 用户名优先，其次邮箱，最后用户 ID：越靠前越容易被人识别
         if (who.isEmpty())
@@ -1108,22 +1130,24 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     if (planTotal > 0.0)
         used = qMax(0.0, planTotal - remaining);
     if (planTotal <= 0.0 && credits.valid)
-        planTotal = remaining + used;   // 兜底：至少能显示一个自洽的进度
+        planTotal = remaining + used; // 兜底：至少能显示一个自洽的进度
     if (planTotal <= 0.0)
         planTotal = used;
 
     m_planName->setText(PlanCatalog::displayName(planId));
     // 订阅无效时统一显示「未知」；有效时附带「周期末取消」的补充说明
     m_planStatus->setText(sub.valid
-                              ? tr("状态：%1%2").arg(sub.status,
-                                                    sub.cancelAtPeriodEnd ? tr("（周期末取消）") : QString())
+                              ? tr("状态：%1%2").arg(sub.status, sub.cancelAtPeriodEnd ? tr("（周期末取消）") : QString())
                               : tr("状态：未知"));
     // 起止时间都有效才展示完整周期，否则退化为「未知」
-    if (sub.currentPeriodStart.isValid() && sub.currentPeriodEnd.isValid()) {
+    if (sub.currentPeriodStart.isValid() && sub.currentPeriodEnd.isValid())
+    {
         m_planPeriod->setText(tr("计费周期：%1 → %2")
                                   .arg(formatDateTime(sub.currentPeriodStart),
                                        formatDateTime(sub.currentPeriodEnd)));
-    } else {
+    }
+    else
+    {
         m_planPeriod->setText(tr("计费周期：未知"));
     }
 
@@ -1137,7 +1161,8 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 明细行展示已用额度（四位小数以体现小额消耗）与同一口径的百分比
     QString detail = tr("本周期已用 %1 credits（%2%）").arg(used, 0, 'f', 4).arg(creditsPercent);
     // 只有确实存在加购或赠送额度时才追加说明，避免常态下文案冗长
-    if (credits.purchasedCredits > 0.0 || credits.freeCredits > 0.0) {
+    if (credits.purchasedCredits > 0.0 || credits.freeCredits > 0.0)
+    {
         detail += tr("　加购 %1　赠送 %2")
                       .arg(credits.purchasedCredits, 0, 'f', 2)
                       .arg(credits.freeCredits, 0, 'f', 2);
@@ -1150,9 +1175,11 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // fallbackReset 是当重置时间未知时使用的兜底文案（空串表示不兜底）。
     // 5 小时与每周两块共用它，保证两条限流区永远同构；每月块分母不同，另行处理。
     const auto applyLimit = [](const WindowLimit &limit, SegmentedBar *bar, QLabel *percentLabel,
-                               QLabel *resetLabel, const QString &fallbackReset) {
+                               QLabel *resetLabel, const QString &fallbackReset)
+    {
         // 数据无效：进度条归零、文字统一置为占位符「—」
-        if (!limit.valid) {
+        if (!limit.valid)
+        {
             bar->setPercent(0);
             percentLabel->setText(QStringLiteral("—"));
             resetLabel->setText(QStringLiteral("—"));
@@ -1164,10 +1191,12 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
         const int percent = limit.percent();
         bar->setPercent(percent);
         percentLabel->setText(QStringLiteral("%1%").arg(percent));
-        // 三档配色：≥85% 红、≥60% 黄、其余绿，让高占用一眼可见
-        percentLabel->setStyleSheet(percent >= 85   ? QStringLiteral("color: #C0392B;")
-                                    : percent >= 60 ? QStringLiteral("color: #B7791F;")
-                                                    : QStringLiteral("color: #2E7D32;"));
+        // 三档配色：≥85% 红、≥60% 黄、其余绿，让高占用一眼可见。
+        // 这里只写"语义级别"，具体色值由样式表按当前主题给出：深色主题用的是
+        // 一组亮色版的语义色，避免深红 / 深绿落在深色卡片上导致看不清。
+        AppTheme::setLevel(percentLabel, percent >= 85   ? QStringLiteral("danger")
+                                         : percent >= 60 ? QStringLiteral("warn")
+                                                         : QStringLiteral("ok"));
         // 写入动态属性：hasReset 供心跳判断，resetAt 供心跳重算倒计时文案
         resetLabel->setProperty("hasReset", true);
         resetLabel->setProperty("resetAt", limit.resetAt);
@@ -1191,14 +1220,18 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 与套餐额度卡共用同一个百分比，保证两处数字永远一致、不会互相打架
     m_monthlyBar->setPercent(creditsPercent);
     m_monthlyPercent->setText(QStringLiteral("%1%").arg(creditsPercent));
-    // 着色规则与上面两个窗口保持一致，避免同一页面出现两套阈值
-    m_monthlyPercent->setStyleSheet(creditsPercent >= 85   ? QStringLiteral("color: #C0392B;")
-                                    : creditsPercent >= 60 ? QStringLiteral("color: #B7791F;")
-                                                           : QStringLiteral("color: #2E7D32;"));
+    // 着色规则与上面两个窗口保持一致，避免同一页面出现两套阈值；
+    // 同样只写语义级别，由样式表按当前主题决定具体色值。
+    AppTheme::setLevel(m_monthlyPercent, creditsPercent >= 85   ? QStringLiteral("danger")
+                                         : creditsPercent >= 60 ? QStringLiteral("warn")
+                                                                : QStringLiteral("ok"));
     // 每月窗口的「重置」就是计费周期结束，因此直接展示周期结束时间而非倒计时
-    if (sub.currentPeriodEnd.isValid()) {
+    if (sub.currentPeriodEnd.isValid())
+    {
         m_monthlyReset->setText(tr("周期结束：%1").arg(formatDateTime(sub.currentPeriodEnd)));
-    } else {
+    }
+    else
+    {
         m_monthlyReset->setText(QStringLiteral("—"));
     }
 
@@ -1206,7 +1239,8 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 统计无效时保留上一次的数值，避免一轮失败把三张卡片全部清空
     // 五条统计文案共用同一个 if 分支，保证「要么整组一起更新、要么整组保持原样」，
     // 不会出现次数是新值而 token 还是旧值这种自相矛盾的中间态。
-    if (summary.valid) {
+    if (summary.valid)
+    {
         m_runsValue->setText(tr("%1 runs").arg(summary.totalCount));
         // 成功率由模型算好（保留一位小数），此处只负责排版
         m_successValue->setText(tr("成功 %1 / 失败 %2　成功率 %3%")
@@ -1227,12 +1261,15 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     // 本次抓取没有任何接口报错
     // 只有「无错误」才隐藏横幅，且仅限非常驻类型：常驻提示代表用户尚未完成的动作，
     // 不能因为一次成功抓取就悄悄消失，否则用户会以为已经配置好了。
-    if (snapshot.errors.isEmpty()) {
+    if (snapshot.errors.isEmpty())
+    {
         m_errors->hide();
         // 只隐藏一次性提示；常驻横幅（如未配置 API Key）必须继续留在界面上
         if (m_banner->isVisible() && !m_bannerSticky)
             m_banner->hide();
-    } else {
+    }
+    else
+    {
         // 多个接口的报错逐行拼接，便于用户按接口定位问题
         m_errors->setText(tr("部分数据获取失败：\n%1").arg(snapshot.errors.join(QLatin1Char('\n'))));
         m_errors->show();
@@ -1286,7 +1323,8 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
     // 统一的百分比换算：分母为 0 时返回 0，避免除零产生 inf/NaN 传到界面上
     // "套餐总额未知"是合法状态（新套餐、接口部分失败），因此这里只退化数值，
     // 不抛错也不返回负数，界面在这种状态下仍要能正常显示。
-    const auto percentOf = [](double part, double whole) -> int {
+    const auto percentOf = [](double part, double whole) -> int
+    {
         if (whole <= 0.0)
             return 0;
         return static_cast<int>(std::floor(part / whole * 100.0));
@@ -1294,8 +1332,10 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
 
     // 每次折算都重读一次配置：用户在设置里改完档位，下一次刷新就会换到新档，
     // 不需要重启程序，也不需要额外的信号来通知这里。
-    switch (AppConfig::statusMetric()) {
-    case AppConfig::StatusMetric::fiveHour: {
+    switch (AppConfig::statusMetric())
+    {
+    case AppConfig::StatusMetric::fiveHour:
+    {
         // 第 1 档：5 小时滑动窗口。分母是窗口上限、分子是窗口内已用量，
         // percent() 由数据模型按 floor(已用 / 上限 × 100) 给出，方向是"越大越紧张"。
         // 这一档最适合刚跑完几个大任务的用户：短期是否会被限流可以立刻看出来。
@@ -1311,7 +1351,8 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
                           .arg(formatCountdown(limit.resetAt));
         break;
     }
-    case AppConfig::StatusMetric::weekly: {
+    case AppConfig::StatusMetric::weekly:
+    {
         // 第 2 档：每周滑动窗口，语义与 5 小时档同构，只是窗口更长、上限更大。
         // 保留独立分支而不与上一档合并，是因为 valid 与 percent 取自不同的子结构体，
         // 强行合并只能把窗口对象当参数传进来，反而更难看懂。
@@ -1326,7 +1367,8 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
                           .arg(formatCountdown(limit.resetAt));
         break;
     }
-    case AppConfig::StatusMetric::monthly: {
+    case AppConfig::StatusMetric::monthly:
+    {
         // 第 3 档：本计费周期额度（套餐总额口径）。这里必须重算一遍 planTotal / used，
         // 才能保证缩略信息与套餐卡给出同一个数字；反推链同样沿用主界面的
         // "总额 − 剩余"，总额未知时退回 summary.totalCost。
@@ -1343,7 +1385,8 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
                           .arg(formatDateTime(snapshot.subscription.currentPeriodEnd));
         break;
     }
-    case AppConfig::StatusMetric::remaining: {
+    case AppConfig::StatusMetric::remaining:
+    {
         // 第 4 档：剩余额度，四档里唯一"方向相反"的一档——percent 表示还剩多少比例，
         // 数值越大越安全；前三档表示用了多少，数值越大越危险。
         view.name = tr("剩余额度");
@@ -1390,7 +1433,8 @@ void MainWindow::updateDesktopIndicators(const UsageSnapshot &snapshot, const Me
     // "本程序算出了什么"，从而把故障范围锁定在推送环节，而不是数据环节。
 
     // ---------------- 通知区域 ----------------
-    if (m_tray) {
+    if (m_tray)
+    {
         // 托盘拿到的是完整上下文而不是单一数字：它的悬停提示有整行文字的空间，
         // 用户不打开主窗口也能判断"用量正常"还是"这个套餐不对劲"。
         // 这里逐字段搬运而不是直接把 MetricView 递下去：托盘模块无需知道指标是怎么
@@ -1418,7 +1462,8 @@ void MainWindow::updateDesktopIndicators(const UsageSnapshot &snapshot, const Me
     // 用户关闭开关时主动清理，避免留下一个不再更新的旧进度条
     // 停在半路的旧进度比"没有进度"更容易误导：用户会以为程序仍在更新、只是用量没变，
     // 因此这里选择主动清空，而不是把最后一轮的数字继续留在任务栏上。
-    if (!AppConfig::taskbarBadgeEnabled()) {
+    if (!AppConfig::taskbarBadgeEnabled())
+    {
         m_taskbar.clearAll();
         return;
     }
@@ -1513,9 +1558,9 @@ QString MainWindow::desktopProbeReport() const
     // 两者对"北京时间"的当前显示都是正确的，但排查环境问题时必须能区分。
     const QTimeZone beijing = beijingTimeZone();
     lines << QStringLiteral("beijingTz = %1 (valid=%2, offset=%3)")
-                  .arg(QString::fromLatin1(beijing.id()))
-                  .arg(beijing.isValid() ? QStringLiteral("yes") : QStringLiteral("no"))
-                  .arg(beijing.offsetFromUtc(QDateTime::currentDateTime()));
+                 .arg(QString::fromLatin1(beijing.id()))
+                 .arg(beijing.isValid() ? QStringLiteral("yes") : QStringLiteral("no"))
+                 .arg(beijing.offsetFromUtc(QDateTime::currentDateTime()));
     lines << QStringLiteral("quitOnLastWindowClosed = %1")
                  .arg(QApplication::quitOnLastWindowClosed() ? QStringLiteral("yes") : QStringLiteral("no"));
     lines << QStringLiteral("closeToTray = %1")
@@ -1524,13 +1569,16 @@ QString MainWindow::desktopProbeReport() const
     // 键名跨版本稳定、人能直接读懂，出现在自检输出里比一个数字有用得多。
     lines << QStringLiteral("metricConfigured = %1")
                  .arg(AppConfig::statusMetricKey(AppConfig::statusMetric()));
-    if (m_hasMetric) {
+    if (m_hasMetric)
+    {
         lines << QStringLiteral("metricName = %1").arg(m_lastMetric.name);
         lines << QStringLiteral("metricText = %1").arg(m_lastMetric.text);
         lines << QStringLiteral("metricPercent = %1").arg(m_lastMetric.percent);
         lines << QStringLiteral("metricValid = %1")
                      .arg(m_lastMetric.valid ? QStringLiteral("yes") : QStringLiteral("no"));
-    } else {
+    }
+    else
+    {
         // 尚未拿到快照时如实标注，避免把"没数据"误读成"指标为空"
         // 这里仍然写出 metricName 一行并注明原因，而不是整块省略：读报告的人（或
         // 解析脚本）需要能区分"程序还没拿到数据"与"报告被截断 / 根本没生成"。

@@ -15,12 +15,14 @@
 //     程序启动阶段静默触碰磁盘上的凭据文件；
 //   · 「测试连接」复用 CommandCodeApi，结果经 connectionTested 信号异步回到
 //     onConnectionTested 槽，界面在此期间禁用按钮以防重复请求；
-//   · 状态标签用内联样式表着色：失败红 (#C0392B)、成功绿 (#2E7D32)、进行中清除
-//     样式以回到主题默认色，使提示语义与颜色一致。
+//   · 状态标签用"语义级别"着色：失败标 danger、成功标 ok、进行中清空级别以回到
+//     主题默认色；具体色值由 AppTheme 按当前主题给出，界面代码不写死颜色。
 
 // 本类的声明：同时引入 QDialog 基类、QUrl 返回值类型与四个控件的前置声明。
 #include "SettingsDialog.h"
 
+// 外观主题：设置对话框直接引用主题模块，使预览即时生效。
+#include "AppTheme.h"
 // AppConfig 提供配置读写、CLI 凭据导入与路径查询等静态接口，是本文件的数据层。
 #include "AppConfig.h"
 // CommandCodeApi 提供连通性测试能力，用于「测试连接」按钮背后的实际请求。
@@ -185,6 +187,25 @@ void SettingsDialog::buildUi()
     // 表单整体作为一个区块加入根布局。
     root->addLayout(form);
 
+    // ---- 外观：主题颜色选择（浅色 / 深色 / 跟随系统）----
+    // 单独成组是因为它影响的是整个程序的观感，与连接配置、桌面集成在语义上无关；
+    // 放在连接配置之后、桌面集成之前，符合"先能用、再好用、再锦上添花"的顺序。
+    auto *appearanceBox = new QGroupBox(tr("外观"));
+    auto *appearanceLayout = new QVBoxLayout(appearanceBox);
+    appearanceLayout->setSpacing(8);
+
+    m_themeCombo = new QComboBox;
+    // userData 存枚举整数值，与指标下拉框保持同一约定，读取时无需做字符串映射。
+    m_themeCombo->addItem(tr("浅色主题"), static_cast<int>(AppConfig::ThemeMode::light));
+    m_themeCombo->addItem(tr("深色主题"), static_cast<int>(AppConfig::ThemeMode::dark));
+    m_themeCombo->addItem(tr("跟随系统"), static_cast<int>(AppConfig::ThemeMode::system));
+    m_themeCombo->setToolTip(tr("「跟随系统」会随 Windows 的浅色 / 深色设置自动切换"));
+    auto *themeRow = new QHBoxLayout;
+    themeRow->addWidget(new QLabel(tr("主题颜色")));
+    themeRow->addWidget(m_themeCombo, 1);
+    appearanceLayout->addLayout(themeRow);
+    root->addWidget(appearanceBox);
+
     // ---- 桌面集成：托盘与任务栏缩略信息 ----
     // 单独成组是因为这四项都属于「把用量展示到窗口之外」的同一类设置，
     // 与上面的连接配置在语义上互不相干，分组后用户更容易找到。
@@ -225,7 +246,9 @@ void SettingsDialog::buildUi()
                                      "若关闭窗口后找不到图标：① 再运行一次本程序即可唤回窗口；"
                                      "② 或在命令行执行 <程序> --quit 结束后台进程。"));
     escapeHint->setWordWrap(true);
-    escapeHint->setStyleSheet(QStringLiteral("color: #8A5300;"));
+    // 起 objectName 后颜色由全局样式表的 #escapeHint 规则给出（当前主题的告警色）：
+    // 原来写死的 #8A5300 是"浅色底上的深琥珀"，在深色主题下几乎不可见。
+    escapeHint->setObjectName(QStringLiteral("escapeHint"));
     desktopLayout->addWidget(escapeHint);
 
     root->addWidget(desktopBox);
@@ -235,12 +258,17 @@ void SettingsDialog::buildUi()
                                  .arg(QDir::toNativeSeparators(AppConfig::settingsFilePath())));
     // 允许自动换行，窗口变窄时提示不会撑大对话框宽度。
     m_hintLabel->setWordWrap(true);
-    // 使用调色板中间色，使其视觉层级低于正式配置项，不喧宾夺主。
-    m_hintLabel->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    // 起 objectName 后由全局样式表的 #dialogHint 规则统一给色（当前主题的次要文本色），
+    // 不再依赖 palette(mid)——该角色在深色主题下与卡片底色的对比度不足，
+    // 正是"提示文字看不清"的来源之一。
+    m_hintLabel->setObjectName(QStringLiteral("dialogHint"));
     root->addWidget(m_hintLabel);
 
     // 动态状态标签：显示导入结果、测试进行中提示或测试结果，初始为空。
     m_statusLabel = new QLabel;
+    // 起 objectName 后，成功 / 失败的配色由样式表按 level 语义级别给出：
+    // 深浅两套主题各有一组对比度足够的绿与红，界面代码不再写死色值。
+    m_statusLabel->setObjectName(QStringLiteral("dialogStatus"));
     // 同样允许换行，因为错误信息（如网络异常描述）可能较长。
     m_statusLabel->setWordWrap(true);
     root->addWidget(m_statusLabel);
@@ -297,6 +325,17 @@ void SettingsDialog::loadFromConfig()
     // findData 返回 -1 说明配置里的取值不在候选项内（例如手工改坏配置文件），
     // 此时退回第 0 项而不是留空，保证界面始终处于可用状态。
     m_metricCombo->setCurrentIndex(metricIndex >= 0 ? metricIndex : 0);
+
+    // 回填外观主题。顺序上必须先选中、后连接信号：若先连接，初始化时的
+    // setCurrentIndex() 会被当成一次用户操作，触发一次多余的落盘与重绘。
+    const int themeValue = static_cast<int>(AppConfig::themeMode());
+    const int themeIndex = m_themeCombo->findData(themeValue);
+    // 回退项取最后一项（system）：它的语义就是"不做任何强制"，是非法值最安全的落点。
+    m_themeCombo->setCurrentIndex(themeIndex >= 0 ? themeIndex : m_themeCombo->count() - 1);
+    // 记录进入对话框时的模式，供 reject() 在用户点「取消」时还原外观与配置。
+    m_initialThemeMode = AppConfig::themeMode();
+    connect(m_themeCombo, &QComboBox::currentIndexChanged,
+            this, &SettingsDialog::onThemeModeChanged);
 }
 
 bool SettingsDialog::trayEnabled() const
@@ -403,8 +442,8 @@ void SettingsDialog::importFromCli()
     QString error;
     // 一次性完成读文件与解析：成功返回 true，失败返回 false 并填充 error。
     if (!AppConfig::importFromCommandCodeCli(&key, &userName, &error)) {
-        // 失败用红色提示，与成功态的绿色形成明确区分。
-        m_statusLabel->setStyleSheet(QStringLiteral("color: #C0392B;"));
+        // 失败标 danger 级别，与成功态的绿色形成明确区分；色值由样式表按主题给出。
+        AppTheme::setLevel(m_statusLabel, QStringLiteral("danger"));
         // 展示底层给出的具体原因（文件不存在、格式非法等），便于用户自助排查。
         m_statusLabel->setText(tr("导入失败：%1").arg(error));
         // 失败时保持输入框原值不变，避免用户已填写的密钥被清空。
@@ -412,8 +451,8 @@ void SettingsDialog::importFromCli()
     }
     // 成功：把导入到的密钥填回输入框，用户可继续核对或直接保存。
     m_keyEdit->setText(key);
-    // 绿色表示成功。
-    m_statusLabel->setStyleSheet(QStringLiteral("color: #2E7D32;"));
+    // 成功标 ok 级别（绿）。
+    AppTheme::setLevel(m_statusLabel, QStringLiteral("ok"));
     // 用户名非空时附带展示，便于用户确认导入的是哪个账号的凭据。
     m_statusLabel->setText(userName.isEmpty()
                                ? tr("已从 CLI 导入 API Key。")
@@ -444,8 +483,8 @@ void SettingsDialog::testConnection()
 {
     // 只含空白字符的输入一律视为未填写，避免发出必然失败的请求。
     if (m_keyEdit->text().trimmed().isEmpty()) {
-        // 校验失败用红色提示。
-        m_statusLabel->setStyleSheet(QStringLiteral("color: #C0392B;"));
+        // 校验失败标 danger 级别。
+        AppTheme::setLevel(m_statusLabel, QStringLiteral("danger"));
         // 明确告诉用户先补哪一项，而不是笼统报「参数错误」。
         m_statusLabel->setText(tr("请先填写 API Key。"));
         // 提前返回，不进入请求流程，也不改动按钮可用状态。
@@ -453,8 +492,8 @@ void SettingsDialog::testConnection()
     }
     // 请求发出前禁用按钮：既防连点，也向用户暗示「正在进行中」。
     m_testButton->setEnabled(false);
-    // 清空样式表，让「进行中」文案使用主题默认颜色，而非残留上一次的红 / 绿。
-    m_statusLabel->setStyleSheet(QString());
+    // 清除语义级别，让「进行中」文案使用主题默认颜色，而非残留上一次的红 / 绿。
+    AppTheme::setLevel(m_statusLabel, QString());
     // 提示用户请求已发出；省略号表示这是一个尚在进行中的状态。
     m_statusLabel->setText(tr("正在测试连接…"));
 
@@ -483,11 +522,66 @@ void SettingsDialog::onConnectionTested(bool ok, const QString &message)
 {
     // 结果已到，恢复按钮可用，允许用户再次测试或直接保存。
     m_testButton->setEnabled(true);
-    // 成功绿、失败红；用三元表达式一次决定配色，与文案语义保持一致。
-    m_statusLabel->setStyleSheet(ok ? QStringLiteral("color: #2E7D32;")
-                                    : QStringLiteral("color: #C0392B;"));
+    // 成功绿、失败红；只写语义级别，具体色值由样式表按当前主题给出。
+    AppTheme::setLevel(m_statusLabel, ok ? QStringLiteral("ok") : QStringLiteral("danger"));
     // 直接把结果文案展示出来，不再自行拼接前缀，避免重复信息。
     m_statusLabel->setText(message);
+}
+
+// ===========================================================================
+//  外观主题
+// ===========================================================================
+
+/**
+ * @brief 读取用户选择的界面主题模式。
+ *
+ * 控件里存的是枚举整数值，经 themeModeKey() 与 themeModeFromKey() 往返一次后返回，
+ * 这样"非法值如何回退"的规则只由 AppConfig 定义一处，界面不重复实现。
+ *
+ * @return AppConfig::ThemeMode，当前选中的模式；控件缺失或未选中时返回 system。
+ * @note 与 statusMetric() 采用完全相同的取值风格，便于维护者举一反三。
+ */
+AppConfig::ThemeMode SettingsDialog::themeMode() const
+{
+    // 控件理论上一定存在，但显式判空可避免将来调整构建顺序时出现空指针解引用。
+    if (m_themeCombo == nullptr || m_themeCombo->currentIndex() < 0)
+        return AppConfig::ThemeMode::system;
+    const int value = m_themeCombo->currentData().toInt();
+    return AppConfig::themeModeFromKey(AppConfig::themeModeKey(static_cast<AppConfig::ThemeMode>(value)),
+                                       AppConfig::ThemeMode::system);
+}
+
+/**
+ * @brief 槽函数：用户切换主题下拉框时立即预览并生效。
+ *
+ * 主题是"所见即所得"的设置：若等到点「保存」才生效，用户在对话框里无法判断
+ * 选中的到底是哪一档（尤其"跟随系统"在系统为浅色时与"浅色主题"看起来一样）。
+ * 因此这里即时调用 AppTheme::setMode()——它同时写入配置并广播变更，
+ * 主窗口、进度条等订阅者会立即按新主题重绘。
+ *
+ * @return 无。
+ * @note 立即落盘意味着"取消"必须负责还原，该职责由 reject() 承担。
+ */
+void SettingsDialog::onThemeModeChanged()
+{
+    AppTheme::setMode(themeMode());
+}
+
+/**
+ * @brief 覆写取消行为：还原进入对话框时的主题，再交给基类关闭。
+ *
+ * 由于主题在切换时已即时生效并落盘，用户按「取消」时若不还原，会出现
+ * "点了取消、外观却变了、配置也被改了"的错觉。这里比较当前配置与进入时的模式，
+ * 仅在确实被改动过时才回写，避免无谓的落盘与重绘。
+ *
+ * @return 无。
+ * @note 点窗口关闭按钮与点「取消」走同一条路径，行为保持一致。
+ */
+void SettingsDialog::reject()
+{
+    if (AppConfig::themeMode() != m_initialThemeMode)
+        AppTheme::setMode(m_initialThemeMode);
+    QDialog::reject();
 }
 
 // ===========================================================================
@@ -513,6 +607,10 @@ void SettingsDialog::accept()
     AppConfig::setBaseUrl(baseUrl());
     // 写入自动刷新间隔；0 表示关闭自动刷新。
     AppConfig::setRefreshSeconds(refreshSeconds());
+    // 写入外观主题。切换下拉框时已即时落盘，此处再写一次是为了覆盖"用户从未
+    // 动过下拉框"的场景，使本函数对全部配置项保持"保存即完整落盘"的一致语义；
+    // 重复写入同一个值无任何副作用。
+    AppConfig::setThemeMode(themeMode());
     // 写入桌面集成配置：托盘开关、任务栏开关、关闭行为与缩略信息指标。
     AppConfig::setTrayEnabled(trayEnabled());
     AppConfig::setTaskbarBadgeEnabled(taskbarBadgeEnabled());

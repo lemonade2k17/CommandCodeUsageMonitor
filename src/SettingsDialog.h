@@ -118,6 +118,16 @@ public:
      */
     AppConfig::StatusMetric statusMetric() const;
 
+    /**
+     * @brief 读取用户选择的界面主题模式。
+     *
+     * 与指标下拉框同一约定：控件里存的是枚举整数值，取不到时回退为
+     * 「跟随系统」，与 AppConfig 的默认值保持一致。
+     *
+     * @return AppConfig::ThemeMode，下拉框当前选中项对应的枚举值。
+     */
+    AppConfig::ThemeMode themeMode() const;
+
 private slots:
     /**
      * @brief 槽函数：响应用户点击「从 CLI 导入」按钮。
@@ -167,6 +177,29 @@ private slots:
      */
     void accept() override;
 
+    /**
+     * @brief 覆写取消行为：先还原进入本对话框时的主题，再走基类默认流程关闭。
+     *
+     * 主题是"选中即生效"的（见 onThemeModeChanged()），因此用户按「取消」时必须
+     * 把外观与配置一并还原，否则会出现"点了取消、界面却变了"的错觉。
+     *
+     * @return 无。
+     * @note 关闭窗口（点 ×）同样会走到这里，行为与「取消」一致。
+     */
+    void reject() override;
+
+    /**
+     * @brief 槽函数：响应用户切换主题下拉框，立即预览并生效。
+     *
+     * 主题属于"所见即所得"的设置：若等到点「保存」才生效，用户无法判断选中的
+     * 是哪一档。因此这里即时调用 AppTheme::setMode()，它同时写配置并广播变更。
+     *
+     * @return 无。
+     * @note 该槽在 loadFromConfig() 中回填完成后才连接，避免初始化时的
+     *       setCurrentIndex() 被误当作一次用户操作而触发多余落盘。
+     */
+    void onThemeModeChanged();
+
 private:
     /**
      * @brief 构建对话框界面：布局、各输入控件、提示标签与底部按钮区。
@@ -203,6 +236,11 @@ private:
     QCheckBox   *m_taskbarCheck = nullptr;    ///< 「在任务栏按钮上显示进度与角标」复选框。
     QCheckBox   *m_closeToTrayCheck = nullptr;///< 「关闭窗口时最小化到托盘」复选框。
     QComboBox   *m_metricCombo = nullptr;     ///< 「缩略信息显示内容」下拉框。
+
+    // ---- 外观（主题） ----
+    QComboBox   *m_themeCombo = nullptr;      ///< 「主题颜色」下拉框，三档选择。
+    /// 进入对话框时的主题模式；供 reject() 在「取消」时还原外观与配置。
+    AppConfig::ThemeMode m_initialThemeMode = AppConfig::ThemeMode::system;
 
     class CommandCodeApi *m_testApi = nullptr;  ///< 测试专用 API 对象，父对象为 this。
 };

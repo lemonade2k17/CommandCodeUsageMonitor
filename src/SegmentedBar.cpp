@@ -6,6 +6,8 @@
 // ---------------------------------------------------------------------------
 #include "SegmentedBar.h"
 
+#include "AppTheme.h"
+
 #include <QPainter>
 #include <QPaintEvent>
 
@@ -36,6 +38,10 @@ SegmentedBar::SegmentedBar(QWidget *parent)
     // 水平方向允许拉伸以填满可用宽度，垂直方向锁定为 sizeHint() 的高度，
     // 这样在多行表单中进度条不会被纵向拉高，保持与官网一致的细条观感。
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    // 主题切换会整体更换调色板，而自绘控件不会被 Qt 自动刷新，因此必须订阅
+    // 主题变更并主动请求重绘，否则进度条会停留在旧主题的配色上。
+    connect(AppTheme::notifier(), &AppTheme::Notifier::changed, this, [this] { update(); });
 }
 
 /**
@@ -141,14 +147,17 @@ QSize SegmentedBar::minimumSizeHint() const
  */
 QColor SegmentedBar::fillColor(int percent) const
 {
+    // 颜色一律取自当前主题调色板：深色主题下语义色是另一组"亮色版"取值，
+    // 从而避免出现"深色底 + 深绿/深红格"这种对比度不足的组合。
+    const AppTheme::Palette &theme = AppTheme::palette();
     // 红色优先判定，保证最高危状态在任何阈值配置下都不会被降级显示。
     if (percent >= m_danger)
-        return QColor(0xE0, 0x4B, 0x4B);   // 红
+        return theme.danger;    // 红
     // 次高优先级：越过告警阈值即转为琥珀色，提示用户留意配额消耗速度。
     if (percent >= m_warn)
-        return QColor(0xE8, 0xA3, 0x3D);   // 琥珀
+        return theme.warning;   // 琥珀
     // 兜底分支：未达任何阈值时使用绿色，表示配额充裕。
-    return QColor(0x2E, 0xA0, 0x62);       // 绿
+    return theme.success;       // 绿
 }
 
 /**
@@ -200,9 +209,10 @@ void SegmentedBar::paintEvent(QPaintEvent *)
 
     // 活动色由占用率决定，只计算一次供整轮循环复用，避免每格重复判定阈值。
     const QColor active = fillColor(m_percent);
-    // 熄灭色取自调色板的中亮色并略微提亮，使其在深色 / 浅色主题下都能保持可见，
-    // 而不是写死灰度值——这样控件能自动跟随系统或应用主题。
-    const QColor idle = palette().color(QPalette::Midlight).lighter(118);
+    // 熄灭色取自主题调色板：深浅两套主题各自给出与卡片底色对比适当的灰，
+    // 不再依赖 QPalette::Midlight——该角色在部分原生样式下并未被正确赋值，
+    // 正是"深色主题下进度条熄灭格看不清"的原因之一。
+    const QColor idle = AppTheme::palette().barIdle;
 
     // 逐格绘制：索引小于 filled 的格子使用活动色，其余使用熄灭色。
     for (int i = 0; i < count; ++i) {
