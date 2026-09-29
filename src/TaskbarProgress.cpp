@@ -501,7 +501,7 @@ void TaskbarProgress::clearProgress()
  *
  * 完整流程：
  *   1) 未连接或已被系统拒绝过角标（m_badgeBlocked）时直接返回；
- *   2) 在 32×32 的透明 QPixmap 上画一个实心圆，颜色由 valid 决定（无效数据用灰色）；
+ *   2) 在 32×32 的透明 QPixmap 上画一个实心圆角方块，颜色由 valid 决定（无效数据用灰色）；
  *   3) 依据文字长度选择字号并居中绘制白字；
  *   4) createHIcon() 把 QPixmap 转成 HICON，失败则不调用 COM（避免交出空句柄）；
  *   5) SetOverlayIcon() 把新句柄交给任务栏，记录 HRESULT 与两个探针字段；
@@ -509,7 +509,7 @@ void TaskbarProgress::clearProgress()
  *
  * 边界条件：
  *   · text 为空时绘制破折号"—"，保证角标不会变成纯色圆点而不传递信息；
- *   · 文字长度 > 4 时字号降到 10px，避免 "100.0%" 这类长文本溢出圆形；
+ *   · 文字长度 > 4 时字号降到 10px，避免 "100.0%" 这类长文本溢出圆角方块；
  *   · valid 为 false 时使用灰色底，与"真实配色"形成可区分的视觉信号。
  *
  * @param[in] text QString，角标文字（建议 ≤ 4 字符，如 "15%"）；空串按"—"处理。
@@ -540,7 +540,7 @@ void TaskbarProgress::setBadge(const QString &text, const QColor &color, bool va
 
     // QPainter 作用于栈上，作用域结束或显式 end() 都会结束绘制状态。
     QPainter painter(&canvas);
-    // 圆形边缘必须抗锯齿，否则 16×16 显示时会出现明显的阶梯状毛边。
+    // 形状边缘必须抗锯齿，否则 16×16 显示时会出现明显的阶梯状毛边。
     painter.setRenderHint(QPainter::Antialiasing, true);
     // 文字抗锯齿单独开关：小字号下它比图形抗锯齿更影响可读性。
     painter.setRenderHint(QPainter::TextAntialiasing, true);
@@ -548,23 +548,38 @@ void TaskbarProgress::setBadge(const QString &text, const QColor &color, bool va
     painter.setPen(Qt::NoPen);
     // valid 决定底色：无效数据用中灰（0x8A8A8A）表示"未知"，避免与绿/黄/红语义混淆。
     painter.setBrush(valid ? color : QColor(0x8A, 0x8A, 0x8A));
-    // 画满整个画布并做成圆形：任务栏角标位置很小，留白会进一步压缩可读面积。
-    // 内缩 0.5 像素并把直径减 1：让抗锯齿的圆形轮廓落在像素格内部，边缘更干净。
-    painter.drawEllipse(QRectF(0.5, 0.5, badgeCanvasSize - 1.0, badgeCanvasSize - 1.0));
+    // 画满整个画布并做成圆角方块（不再用内切圆形）：圆在文字上下两端宽度收窄明显，
+    // "4%" 这类组合的白字四角与两侧必然露出绿底、落在任务栏底色上反而看不清
+    // （用户实测反馈）；圆角方块铺满画布把文字完整包住，观感与托盘图标一致。
+    // 圆角半径取画布的约 1/5（6px/31px）；内缩 0.5 像素让抗锯齿轮廓落在像素格内部。
+    painter.drawRoundedRect(QRectF(0.5, 0.5, badgeCanvasSize - 1.0, badgeCanvasSize - 1.0), 6.0, 6.0);
 
     // 空文本退化为破折号：保证任何调用都能产生可辨识的角标，而不是一个纯色圆点。
     const QString shown = text.isEmpty() ? QStringLiteral("—") : text;
-    // 字符数越多字号越小，保证 "100%" 也不会溢出圆形。
+    // 字符数越多字号越小，保证 "100%" 也不会溢出圆角方块。
     // qMax(1, ...) 兜住空串（理论上已被 shown 的破折号排除），使后续比较总是有定义。
     const int length = qMax(1, shown.size());
     // 从painter 取出当前字体再改属性：保证字形族与系统 UI 字体一致，
     // 只覆盖像素字号与粗细，避免自造 QFont 造成的字形差异。
     QFont font = painter.font();
     // 四级字号阶梯（≤2 字符 20px、3 字符 16px、4 字符 12px、更长 10px）：
-    // 用空间换可读性，让 "99%" 尽量大、"100.0%" 也仍能完整落在圆内。
-    font.setPixelSize(length <= 2 ? 20 : (length <= 3 ? 16 : (length <= 4 ? 12 : 10)));
+    // 用空间换可读性，让 "99%" 尽量大、"100%" 也仍能完整落在方块内。
+    int pixelSize = length <= 2 ? 20 : (length <= 3 ? 16 : (length <= 4 ? 12 : 10));
     // 粗体：小尺寸下细笔画在缩放后几乎不可见，加粗能显著提升辨识度。
     font.setBold(true);
+    // 度量兜底（与托盘图标同理）：固定档位按"数字较窄"估算，百分号等宽字符的
+    // 组合（如 "4%"）实测仍可能超出方块可用宽度。用字体度量实测文字宽度，
+    // 超宽就每级缩 2px 重测，直到放得下或到达可读下限——"绿底包住文字"
+    // 最终由度量保证，档位只负责常规情形下的字号稳定。
+    // 垂直方向无需兜底：档位上限 20px（≤2 字符档）的字形高必然小于 32px 画布，
+    // 且粗体数字不含深降部，上下余量充足。
+    const int maxBadgeTextWidth = badgeCanvasSize - 4;   // 画布左右各留 2px 安全边距
+    QFontMetrics metrics(font);
+    while (metrics.horizontalAdvance(shown) > maxBadgeTextWidth && pixelSize > 8) {
+        pixelSize -= 2;
+        font.setPixelSize(pixelSize);
+        metrics = QFontMetrics(font);
+    }
     painter.setFont(font);
     // 白字配深色底：无论底是三档配色中的哪一档，白字都有足够对比度。
     painter.setPen(Qt::white);

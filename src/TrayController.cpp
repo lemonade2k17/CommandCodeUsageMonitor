@@ -456,10 +456,9 @@ QPixmap TrayController::makeTrayPixmap(const QString &text, const QColor &backgr
     // 4~5 个字符（如 "100%"）必须缩小，否则会溢出圆角方块。
     // 先取 max(1, ...) 是因为空串长度为 0，若直接参与分档会落到异常分支。
     const int length = qMax(1, text.size());
-    // 四档字号分别对应 1~2 字符、3 字符、4 字符、≥5 字符：
-    // 之所以不按像素宽度动态测量，是因为等宽数字配合固定档位足以覆盖全部取值，
-    // 而动态测量会带来"同一数值不同字号"的抖动。
-    const int pixelSize = length <= 2 ? 44 : (length <= 3 ? 34 : (length <= 4 ? 26 : 20));
+    // 四档字号分别对应 1~2 字符、3 字符、4 字符、≥5 字符：先用固定档位保证
+    // 常见取值之间的字号稳定，避免同一数值在不同刷新之间跳字号。
+    int pixelSize = length <= 2 ? 44 : (length <= 3 ? 34 : (length <= 4 ? 26 : 20));
 
     // 基于 painter 当前字体复制一份再改，而不是新建 QFont：
     // 这样可以继承平台的默认字形与 hinting 设置，只覆盖需要的两项属性。
@@ -467,6 +466,20 @@ QPixmap TrayController::makeTrayPixmap(const QString &text, const QColor &backgr
     font.setPixelSize(pixelSize);
     // 加粗：缩小到 16 像素后笔画会更细，加粗能显著提升小尺寸下的可读性。
     font.setBold(true);
+    // 度量兜底：固定档位是按"数字较窄"估算的，个别组合（如 "4%" 的百分号很宽、
+    // 剩余额度模式的两位数）实测仍会顶到甚至溢出圆角方块，白字露出底色反而看不清
+    // （用户实测反馈）。因此用字体度量实测文字宽度，超宽就每级缩 2px 重测，
+    // 直到放得下或到达可读下限——"绿底包住文字"最终由度量保证，
+    // 档位只负责常规情形下的字号稳定。
+    // 垂直方向无需兜底：档位上限 44px（≤2 字符档）的字形高远小于 60px 方块高，
+    // 上下余量由档位上限自然保证。
+    const int maxTextWidth = trayCanvasSize - 12;   // 左右各留 6px 安全边距
+    QFontMetrics metrics(font);
+    while (metrics.horizontalAdvance(text) > maxTextWidth && pixelSize > 14) {
+        pixelSize -= 2;
+        font.setPixelSize(pixelSize);
+        metrics = QFontMetrics(font);
+    }
     painter.setFont(font);
 
     // 文字固定白色：三档底色（绿/琥珀/红）与灰色都足够深，
