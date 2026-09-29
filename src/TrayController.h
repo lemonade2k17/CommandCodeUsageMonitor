@@ -1,0 +1,174 @@
+// ---------------------------------------------------------------------------
+//  TrayController.h —— 通知区域（系统托盘）图标控制器
+//
+//  职责：把"套餐用量"压缩成一条缩略信息，显示在 Windows 通知区域：
+//        · 图标本体：动态绘制的彩底 + 百分比文字（如 "15%"），颜色随占用率变化；
+//        · 悬停提示：套餐名、剩余额度、所选指标的已用/上限与重置时间、最后更新时间；
+//        · 右键菜单：显示主窗口 / 立即刷新 / 设置 / 退出。
+//
+//  设计要点：
+//    1. 本类**不依赖**任何 Win32 API，纯 Qt 实现，因此可在关闭任务栏集成时单独使用；
+//    2. 图标 pixmap 每次收到新数据才重绘（缓存上一次的文本与颜色），避免无谓重绘；
+//    3. 所有对外动作都以信号形式抛出，主窗口负责接线，本类不直接操作窗口。
+// ---------------------------------------------------------------------------
+#pragma once
+
+#include <QColor>
+#include <QObject>
+#include <QString>
+#include <QStringList>
+
+class QSystemTrayIcon;
+class QMenu;
+class QAction;
+
+// ---------------------------------------------------------------------------
+//  TrayStatus —— 托盘图标所需的全部展示数据
+//
+//  由主窗口在每次刷新成功后填充；结构本身不理解接口字段，只承载"已经算好的"
+//  展示值，从而让托盘模块与接口解析模块彻底解耦。
+// ---------------------------------------------------------------------------
+struct TrayStatus
+{
+    bool    valid = false;      ///< 是否已有一次成功的数据；false 时图标显示占位态
+    QString metricName;         ///< 所选指标名称，如「5 小时限额」「每周限额」「剩余额度」
+    int     metricPercent = 0;  ///< 所选指标的占用百分比（0~100），用于配色与进度条
+    QString metricText;         ///< 绘制在图标上的缩略文字，如 "15%"（长度建议 ≤ 4 字符）
+    QString planName;           ///< 套餐显示名，如「GOAT」
+    double  remaining = 0.0;    ///< 本周期剩余额度
+    double  total = 0.0;        ///< 套餐总额度
+    QString detailText;         ///< 所选指标的明细，如「已用 2.24 / 14　重置还剩 2h 39m」
+    QString updatedText;        ///< 最后刷新时间文本，如 "14:35:02"
+    QStringList errors;         ///< 上次刷新的错误列表，非空时提示里会附上
+};
+
+// ---------------------------------------------------------------------------
+//  TrayController —— 通知区域图标的生命周期与内容更新
+// ---------------------------------------------------------------------------
+class TrayController : public QObject
+{
+    Q_OBJECT
+
+public:
+    /**
+     * @brief 构造托盘控制器并尝试创建托盘图标。
+     *
+     * 构造时即创建 QSystemTrayIcon 与其菜单，但**不会立刻显示**；是否显示由
+     * setEnabled() 决定。若当前系统不支持托盘（QSystemTrayIcon::isSystemTrayAvailable()
+     * 为假），对象仍然可用，只是 isSupported() 返回 false、setEnabled() 不会生效，
+     * 以便调用方统一处理而无需到处判空。
+     *
+     * @param[in] parent QObject*，父对象；传 nullptr 表示由调用方自行管理生命周期。
+     * @return 无。
+     * @note 必须在 QApplication 构造之后创建：QSystemTrayIcon 依赖 GUI 事件循环。
+     */
+    explicit TrayController(QObject *parent = nullptr);
+
+    /** @brief 析构：隐藏并释放托盘图标与菜单。 @return 无。 */
+    ~TrayController() override;
+
+    /**
+     * @brief 当前系统是否提供通知区域。
+     * @return bool，true 表示可以显示托盘图标；false 表示该平台/会话不支持。
+     */
+    bool isSupported() const;
+
+    /**
+     * @brief 图标当前是否处于显示状态。
+     * @return bool，true 表示托盘图标可见。
+     */
+    bool isEnabled() const;
+
+    /**
+     * @brief 询问 Qt 侧的"显示请求状态"。
+     *
+     * 注意语义边界：本函数返回的是 QSystemTrayIcon 自己的标志位，只表示
+     * "程序已请求显示图标"，**并不代表 shell 真的把它画在了任务栏上**。
+     * Windows 11 默认会把新图标收进溢出区（`^`），此时本函数依然返回 true。
+     * 因此自检用它验证"程序侧动作已完成"，而"肉眼是否可见"只能靠截图确认。
+     *
+     * @return bool，true 表示 Qt 认为图标已处于显示状态。
+     */
+    bool isVisible() const;
+
+    /**
+     * @brief 显示或隐藏托盘图标。
+     *
+     * 用户可在设置里关闭该功能；关闭时会立即隐藏图标但保留对象，以便随时再次开启。
+     * 若系统不支持托盘，本函数不做任何事（并可被调用方用 isSupported() 提前拦截）。
+     *
+     * @param[in] enabled bool，true 显示、false 隐藏。
+     * @return 无。
+     * @note 显示时会同时应用最近一次 setStatus() 的内容；尚无数据时显示占位图标。
+     */
+    void setEnabled(bool enabled);
+
+    /**
+     * @brief 用最新数据刷新图标、悬停提示与菜单标题。
+     *
+     * 内部会缓存上一次绘制所用的「文字 + 颜色」，两者都没变时跳过重绘，
+     * 因为托盘图标重绘在 Windows 上要走一趟 HICON 转换，属于相对昂贵的操作。
+     *
+     * @param[in] status TrayStatus，由主窗口算好的展示数据。
+     * @return 无。
+     * @note 本函数可在没有托盘的环境下安全调用（仅更新内部缓存）。
+     */
+    void setStatus(const TrayStatus &status);
+
+    /**
+     * @brief 弹出一条气泡通知（Windows 通知区域气泡）。
+     *
+     * @param[in] title QString，标题。
+     * @param[in] message QString，正文。
+     * @param[in] warning bool，true 用警告图标、false 用信息图标。
+     * @return 无。
+     * @note 系统可能按用户设置屏蔽气泡；本类不重试、不阻塞。
+     */
+    void showMessage(const QString &title, const QString &message, bool warning = false);
+
+    /**
+     * @brief 依据占用百分比返回语义色（绿 / 琥珀 / 红）。
+     *
+     * 公开为静态方法是为了让任务栏角标与托盘图标共用同一套配色规则：
+     * 若两处各写一份阈值，将来调整告警档位时极易只改一处而造成视觉不一致。
+     *
+     * @param[in] percent int，占用百分比（0~100）。
+     * @return QColor，< 60 绿、60~84 琥珀、≥ 85 红。
+     */
+    static QColor severityColor(int percent);
+
+signals:
+    /** @brief 用户在托盘菜单里选择「显示主窗口」或双击图标。 */
+    void showWindowRequested();
+    /** @brief 用户在托盘菜单里选择「立即刷新」。 */
+    void refreshRequested();
+    /** @brief 用户在托盘菜单里选择「设置」。 */
+    void settingsRequested();
+    /** @brief 用户在托盘菜单里选择「退出」。 */
+    void quitRequested();
+
+private:
+    /**
+     * @brief 把缩略文字绘制成托盘图标位图。
+     *
+     * 画布固定 64×64，文字自适应字号（字符越多字号越小），这样 Windows 缩放到
+     * 16/24/32 像素时有足够采样密度，视觉上比直接用 16×16 清晰。
+     *
+     * @param[in] text QString，要绘制的缩略文字，如 "15%"。
+     * @param[in] background QColor，图标底色。
+     * @param[in] valid bool，false 时绘制灰底问号占位图。
+     * @return QPixmap，可直接交给 QSystemTrayIcon 的位图。
+     */
+    static QPixmap makeTrayPixmap(const QString &text, const QColor &background, bool valid);
+
+    /** @brief 重建悬停提示文本（套餐、剩余额度、指标明细、更新时间与错误）。 @return 无。 */
+    void rebuildTooltip();
+
+    QSystemTrayIcon *m_tray = nullptr;   ///< 托盘图标本体（构造时创建，生命周期随本对象）
+    QMenu           *m_menu = nullptr;   ///< 右键菜单
+    QAction         *m_headerAction = nullptr;  ///< 菜单顶部不可点击的摘要行
+    TrayStatus       m_status;           ///< 最近一次数据
+    QString          m_lastDrawnText;    ///< 上次绘制用的文字，用于跳过重复重绘
+    QColor           m_lastDrawnColor;   ///< 上次绘制用的底色，用于跳过重复重绘
+    bool             m_enabled = false;  ///< 用户是否开启了托盘图标
+};

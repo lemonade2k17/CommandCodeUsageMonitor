@@ -1,0 +1,29 @@
+# 构建目录
+build/
+build-static/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.ninja
+
+# Qt / IDE
+*.user
+*.pro.user*
+.qtc_clangd/
+.vscode/
+.idea/
+
+# 运行时产物与日志
+*.exe
+*.dll
+*.log
+selftest*.txt
+docs/selftest*.txt
+
+# 系统
+Thumbs.db
+desktop.ini
+
+# 桌面集成自检的运行时输出（每次运行都会变化，不入库）
+docs/ui-probe.txt
