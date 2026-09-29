@@ -14,6 +14,11 @@
 
 #include <QAction>
 #include <QApplication>
+// QCoreApplication::applicationFilePath()：提升托盘图标时要与注册表里
+// 外壳记录的 ExecutablePath 比对本程序 exe 的位置。
+#include <QCoreApplication>
+// QDir::toNativeSeparators()：注册表中的路径是反斜杠原生形态，比较前先转换。
+#include <QDir>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
@@ -21,7 +26,12 @@
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+// QSettings(NativeFormat)：读写 HKCU\Control Panel\NotifyIconSettings 下的
+// 图标可见性（IsPromoted）配置，是把图标从 Win11 溢出区提进可见区的正规通道。
+#include <QSettings>
 #include <QSystemTrayIcon>
+// QTimer::singleShot()：外壳尚未建立本程序条目时，安排一次延迟重试。
+#include <QTimer>
 
 // 匿名命名空间（anonymous namespace）：把下面的常量与配色限制在本翻译单元内。
 // 这样做一是不污染全局符号表，二是防止其它源文件误用到"托盘专用"的画布尺寸。
@@ -224,10 +234,76 @@ void TrayController::setEnabled(bool enabled)
         // 放到最后显示：此时图标位图与提示文本都已就绪，
         // 用户看到的第一帧就是完整内容，不会闪一下空白。
         m_tray->show();
+        // 显示成功后立刻尝试提升到可见区（Windows 11 默认把新图标收进溢出区）：
+        // 外壳的注册条目可能要等图标真正注册后才落盘，因此这里先试一次，
+        // 失败再安排一次 2 秒后的重试；两次都拿不到条目就放弃，属预期内的降级，
+        // 图标本身仍会在溢出区里可用，用户手动提升同样有效。
+        if (!promoteToVisibleTrayArea()) {
+            // 重试挂在定时器上而不是循环等待：绝不阻塞创建托盘的调用方，
+            // 2 秒是"外壳完成图标注册"的宽限量级，通常首次尝试就已成功。
+            QTimer::singleShot(2000, this, [this]() {
+                // 重试前核对开关仍然开启：若用户在这 2 秒里关掉了托盘，
+                // 就不应再为已经隐藏的图标做任何注册表改动。
+                if (m_enabled)
+                    promoteToVisibleTrayArea();
+            });
+        }
     } else {
         // 只隐藏不销毁：保留对象与已注册的菜单，随时可以零成本再次开启。
         m_tray->hide();
     }
+}
+
+/**
+ * @brief 尝试把托盘图标从 Windows 11 溢出区提升到任务栏可见区域（best-effort）。
+ *
+ * 实现分四步：① 取本程序 exe 的原生路径作为匹配依据；② 枚举
+ * HKCU\Control Panel\NotifyIconSettings 的全部子项——子项名是外壳的私有哈希、
+ * 无法反推，只能靠 ExecutablePath 值逐个比对；③ 找到匹配项后，仅当 IsPromoted
+ * 还不是 1 时写入 1（幂等，避免每次启动都改注册表）；④ 先隐藏再显示图标，
+ * 迫使外壳按新状态重新注册，用户无需重启程序即可看到图标出现在可见区。
+ *
+ * @return bool，true=条目存在且已处于/已被置为提升状态；false=条目尚不存在。
+ * @note 全程不抛错、不弹窗：注册表不可写、条目缺失都属于"环境暂时不配合"，
+ *       静默返回 false 即可；图标本身照常显示（哪怕在溢出区），功能没有损失。
+ */
+bool TrayController::promoteToVisibleTrayArea()
+{
+    // 匹配依据：本进程可执行文件的原生路径。外壳记录的 ExecutablePath 就是这个形态，
+    // 但大小写与目录写法可能不一致，因此比较时统一转原生分隔符并忽略大小写。
+    const QString selfPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+
+    // 只打开通知区域图标的注册表节点：NativeFormat 让 QSettings 直接以该键为根，
+    // childGroups() 返回的每个组名就是外壳为一个图标建立的子项（私有哈希）。
+    QSettings notifyIcons(QStringLiteral("HKEY_CURRENT_USER\\Control Panel\\NotifyIconSettings"),
+                          QSettings::NativeFormat);
+    const QStringList groups = notifyIcons.childGroups();
+    for (const QString &group : groups) {
+        // 逐个子项读 ExecutablePath 并与本程序比对；其它程序的条目一律不碰，
+        // 这是把"提升自己"限定在"自己的图标"上的唯一判据。
+        const QString entryPath = notifyIcons.value(group + QStringLiteral("/ExecutablePath")).toString();
+        if (entryPath.compare(selfPath, Qt::CaseInsensitive) != 0)
+            continue;
+
+        // 已是 1（用户自己开过，或之前提升过）就不必再动注册表，也不必闪一次图标。
+        if (notifyIcons.value(group + QStringLiteral("/IsPromoted"), 0).toInt() == 1)
+            return true;
+
+        // 写入提升标记并立即刷盘：外壳按此值决定图标摆在可见区还是溢出区。
+        notifyIcons.setValue(group + QStringLiteral("/IsPromoted"), 1);
+        notifyIcons.sync();
+
+        // 先隐藏再显示 = 对外壳执行一次 NIM_DELETE + NIM_ADD，让提升状态立即生效；
+        // 显示前重置绘制缓存并重放当前数据，保证重新出现的图标内容不缺失。
+        m_tray->hide();
+        m_lastDrawnText.clear();
+        setStatus(m_status);
+        m_tray->show();
+        return true;
+    }
+    // 走到这里说明外壳还没有为本程序建立条目：通常是图标刚注册、外壳尚未落盘，
+    // 或注册根本没成功（如低完整性等环境限制）。返回 false 让调用方决定是否重试。
+    return false;
 }
 
 /**

@@ -161,6 +161,24 @@ private:
      */
     static QPixmap makeTrayPixmap(const QString &text, const QColor &background, bool valid);
 
+    /**
+     * @brief 尝试把托盘图标从 Windows 11 溢出区提升到任务栏可见区域。
+     *
+     * Windows 11 默认把新程序的托盘图标收进溢出区（任务栏右下角的 ^ 弹层），
+     * 用户不主动设置就"看不见"。系统把每个已注册图标的可见性记在注册表
+     * HKCU\Control Panel\NotifyIconSettings\<私有哈希> 下，其中 IsPromoted=1
+     * 等价于系统设置里"在任务栏显示"开关打开。本函数枚举该键的子项，找到
+     * ExecutablePath 与本程序 exe 一致的条目后把 IsPromoted 写为 1，
+     * 并通过"先隐藏再显示"让外壳重新注册图标、立即应用新的可见性。
+     *
+     * @return bool，true 表示找到本程序条目且已处于/已被置为提升状态；
+     *         false 表示外壳尚未为本程序建立条目（图标尚未注册成功），本次未做任何修改。
+     * @note 属于 best-effort：条目由外壳在图标注册成功后创建，时机不受本进程控制，
+     *       找不到条目不算错误，调用方不应据此改变托盘的启用状态。
+     * @note 只写与本程序 exe 路径匹配的那个条目，绝不触碰其它程序的可见性设置。
+     */
+    bool promoteToVisibleTrayArea();
+
     /** @brief 重建悬停提示文本（套餐、剩余额度、指标明细、更新时间与错误）。 @return 无。 */
     void rebuildTooltip();
 

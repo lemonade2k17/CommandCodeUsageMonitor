@@ -19,6 +19,8 @@
 #include <QJsonObject>
 #include <QSettings>
 #include <QStandardPaths>
+// QStringList：legacyConfigFilePaths() 的返回类型（旧配置候选路径列表）。
+#include <QStringList>
 
 // 匿名命名空间：仅本翻译单元可见的内部常量与工具函数
 namespace {
@@ -46,24 +48,74 @@ QSettings settings()
 namespace AppConfig {
 
 /**
- * @brief 计算配置文件路径，并确保其父目录存在。
+ * @brief 计算旧版本配置文件的候选路径（一次性迁移的数据来源）。
  *
- * 首选 QStandardPaths::AppConfigLocation；只有在该查询返回空串时
- * （极少数受限或未初始化环境）才退回用户主目录的隐藏目录，
- * 避免因路径为空而把配置写到当前工作目录。
+ * 旧版本把配置放在 QStandardPaths::AppConfigLocation 下。该档位在 Qt 的
+ * qstandardpaths_win.cpp 里随进程完整性级别变化：中完整性进程映射到 %LOCALAPPDATA%，
+ * 低完整性进程映射到 %USERPROFILE%\AppData\LocalLow。迁移执行时进程通常是中完整性
+ * （配置路径修复后 AppConfigLocation 只会解析出 %LOCALAPPDATA% 一条路），因此历史上
+ * 真正落过盘的 LocalLow 路径必须按用户主目录直接拼出来，否则永远探测不到旧文件。
+ *
+ * @return QStringList，按优先级排列的旧配置文件候选路径；只拼路径，不检查存在性。
+ * @note 候选 2 硬编码了组织名与应用名（均由 main() 设为 CommandCodeUsageMonitor），
+ *       这两个值是本程序的固定常量；若将来改动其中任何一个，必须同步修改这里的拼接。
+ */
+QStringList legacyConfigFilePaths()
+{
+    QStringList paths;
+    // 候选 1：当前进程视角的 AppConfigLocation（中完整性下即 %LOCALAPPDATA% 一支）。
+    // 旧版本从未在正常双击场景往这里写过（那时进程也是低完整性），保留它是为了
+    // 兼容"曾在中完整性环境运行过旧版本"的极端情况，探测成本只有一次 stat。
+    const QString appConfigDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    if (!appConfigDir.isEmpty())
+        paths << appConfigDir + QStringLiteral("/settings.ini");
+    // 候选 2：LocalLow 的固定位置。Qt 没有直接暴露 FOLDERID_LocalAppDataLow 的查询档位，
+    // 而该目录在 Windows 上固定位于用户主目录之下，直接拼接即可；这正是旧版本在
+    // 低完整性进程里实际写出过配置的地方，是本次迁移最主要的来源。
+    paths << QDir::homePath()
+                 + QStringLiteral("/AppData/LocalLow/CommandCodeUsageMonitor/CommandCodeUsageMonitor/settings.ini");
+    return paths;
+}
+
+/**
+ * @brief 计算配置文件路径，并确保其父目录存在；必要时执行一次旧配置迁移。
+ *
+ * 使用 QStandardPaths::AppDataLocation（Roaming）而不是旧版本的 AppConfigLocation：
+ * 在 Qt 的 Windows 实现里，前者对中、低完整性进程都映射到 FOLDERID_RoamingAppData
+ * （%APPDATA%），路径不随进程完整性级别漂移；后者在低完整性进程里会漂移到
+ * LocalAppDataLow，造成"同一个用户在不同启动方式下各有一份配置"的分裂局面。
  *
  * @return QString，settings.ini 的绝对路径；父目录已通过 mkpath 创建。
- * @note mkpath 对已存在的目录是幂等操作，重复调用无副作用；
- *       目录创建失败（如无权限）时不报错，后续写入会由 QSettings 静默忽略。
+ * @note 迁移是一次性的：仅当新文件不存在且某个旧候选文件存在时整体复制一次；
+ *       旧文件复制后保留不删（不静默销毁用户数据），且此后因新文件已存在而
+ *       不再进入迁移分支，重复调用是安全的。
+ * @note 迁移失败（如目标目录只读）时静默放弃：QSettings 会把新配置当空白处理，
+ *       用户重新填写一遍即可恢复，不值得为此阻断启动或弹窗打扰。
  */
 QString settingsFilePath()
 {
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // Roaming 档位：中、低完整性进程指向同一目录，配置位置从此不再漂移
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     // 空路径会让配置落到进程当前目录，不可预期，故必须回退到主目录
     if (dir.isEmpty())
         dir = QDir::homePath() + QStringLiteral("/.commandcode-usage");
     QDir().mkpath(dir);
-    return dir + QStringLiteral("/settings.ini");
+    const QString path = dir + QStringLiteral("/settings.ini");
+
+    // 一次性迁移：新配置尚不存在时，把旧位置（含 API Key）整体搬过来。
+    // 逐个候选探测，第一个存在的旧文件生效；QFile::copy 在目标已存在时必然失败，
+    // 外层的 exists 判断已排除该情况，这里无需再处理复制冲突。
+    if (!QFile::exists(path)) {
+        const QStringList legacyPaths = legacyConfigFilePaths();
+        for (const QString &legacyPath : legacyPaths) {
+            if (QFile::exists(legacyPath)) {
+                // 复制结果（成功/失败）都不阻断：失败时按"无旧配置"继续运行
+                QFile::copy(legacyPath, path);
+                break;   // 只迁移找到的第一份旧配置，无论成败都终止探测
+            }
+        }
+    }
+    return path;
 }
 
 /**

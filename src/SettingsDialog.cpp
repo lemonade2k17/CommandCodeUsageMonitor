@@ -247,6 +247,11 @@ void SettingsDialog::buildUi()
 
     // 底部按钮区采用系统标准按钮盒，自动适配各平台的按钮顺序与命名习惯。
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    // 标准按钮的默认文字（Save/Cancel）来自 Qt 自带的翻译资源；本程序没有内嵌
+    // 翻译文件，直接显示英文会与全中文界面格格不入，因此就地改写显示文本。
+    // 只改显示文字，不改变按钮的 accept/reject 语义与信号连接。
+    buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
     // 「测试连接」以 ActionRole 加入：它不参与接受 / 拒绝语义，仅作为附加动作。
     m_testButton = buttons->addButton(tr("测试连接"), QDialogButtonBox::ActionRole);
     // 点击「测试连接」→ 本地校验后发起连通性测试。

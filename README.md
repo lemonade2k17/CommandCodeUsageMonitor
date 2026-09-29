@@ -45,6 +45,10 @@
 
 托盘右键菜单：**显示主窗口 / 立即刷新 / 设置… / 退出**；双击托盘图标亦可唤出窗口。
 
+托盘图标实拍（自动提升后出现在任务栏**可见区**，紧跟溢出箭头 `^` 之后的第一个位置；绿色 `45%` 即 5 小时限额占用率，点 X 关窗后图标仍驻留）：
+
+![托盘图标](docs/screenshot-tray-promoted.png)
+
 ### ⚠️ 找不到托盘图标时怎么办（重要）
 
 Windows 11 会把新托盘图标收进**溢出区**（任务栏上的 `^`）。如果你勾选了「关闭窗口时最小化到托盘」，
@@ -63,9 +67,8 @@ Windows 11 会把新托盘图标收进**溢出区**（任务栏上的 `^`）。�
 
 ### 两个平台注意事项
 
-1. **Windows 11 默认会把新的托盘图标收进溢出区**（任务栏上的 `^`）。要常驻显示，请把图标从溢出区拖到任务栏，或在「设置 → 个性化 → 任务栏 → 其他系统托盘图标」里打开本程序。**找不到图标时的自救办法见上文「找不到托盘图标时怎么办」。**
-2. **任务栏角标有权限门槛**：`SetOverlayIcon` 要求进程完整性级别不低于任务栏。正常双击运行时（中完整性）应可用；若本程序被沙箱/低完整性父进程启动，系统会返回 `E_ACCESSDENIED (0x80070005)`，此时程序**自动降级**为"只有进度条、没有角标"并停止重试，不影响其它功能。本机实测（沙箱内启动）：`processIntegrity = Low (0x1000)` + `taskbarBadgeHresult = 0x80070005`，而同一进程的 `taskbarProgressApplied = yes` —— 即进度条生效、角标被拒。
-   ⚠️ **诚实披露**：上述"中完整性下可用"是基于 Windows 权限模型的推断，**本次未能在中完整性环境下验证**。你双击运行后若仍无角标，请把 `--probe-ui` 的输出发我。
+1. **Windows 11 默认会把新的托盘图标收进溢出区**（任务栏上的 `^`）。程序在启用托盘时会**自动尝试把图标提升到任务栏可见区**：写注册表 `HKCU\Control Panel\NotifyIconSettings` 中本程序条目的 `IsPromoted=1`（等效于你在系统设置里打开该开关），并让外壳重新注册图标。若外壳尚未登记本程序的图标（例如图标注册失败时），提升会静默跳过，此时可手动拖动，或到「设置 → 个性化 → 任务栏 → 其他系统托盘图标」里打开本程序。**找不到图标时的自救办法见上文「找不到托盘图标时怎么办」。**
+2. **任务栏角标有权限门槛（根因已定位并修复）**：`SetOverlayIcon` 要求进程完整性级别不低于任务栏，否则返回 `E_ACCESSDENIED (0x80070005)`。本项目开发目录被会话沙箱打了**低完整性**强制标签并被 exe 继承，Windows 按映像文件的标签降权启动进程——即使从资源管理器双击，进程也是低完整性，进而导致：任务栏角标被拒、托盘图标注册不可靠、Qt 把配置目录重定向到 LocalLow。**修复**：`scripts/build-static.ps1` 在每次构建的最后用 `icacls /setintegritylevel M` 给 exe 打上显式的 Medium 标签（显式标签优先于继承标签；重新链接会重新继承目录标签，因此每次构建都必须重打）。实测对比：修复前 `processIntegrity = Low (0x1000)` + `taskbarBadgeHresult = 0x80070005`；修复后 `processIntegrity = Medium (0x2000)` + `taskbarBadgeHresult = 0x00000000` + `taskbarProgressApplied / taskbarBadgeApplied = yes`。若重新构建后角标仍不显示，请先看 `--probe-ui` 输出里的 `processIntegrity` 是否为 `Medium (0x2000)`。
 
 ### 运行时自检
 
@@ -99,17 +102,22 @@ Windows 11 会把新托盘图标收进**溢出区**（任务栏上的 `^`）。�
 
 ## 配置
 
-配置保存在（Windows 上 Qt 的 `AppConfigLocation` 落在 **LocalLow**，不是 Roaming）：
+配置保存在 **Roaming**（`QStandardPaths::AppDataLocation`；该档位在 Qt 的 Windows 实现里对中、低完整性进程都映射到同一个 `%APPDATA%` 目录，配置位置不随启动方式漂移）：
 
 ```
-%USERPROFILE%\AppData\LocalLow\CommandCodeUsageMonitor\CommandCodeUsageMonitor\settings.ini
+%APPDATA%\CommandCodeUsageMonitor\CommandCodeUsageMonitor\settings.ini
 ```
+
+> **迁移说明**：早期版本把配置放在 `%USERPROFILE%\AppData\LocalLow\...`（Qt 在低完整性
+> 进程里会把 `AppConfigLocation` 重定向到 LocalLow）。新版本首次启动时若发现新位置
+> 没有配置而旧位置存在，会把旧配置**整体复制**过来（含 API Key）；旧文件保留不删，
+> 确认无误后可手动清理。
 
 不确定时可以直接问程序本身，它会打印实际路径：
 
 ```powershell
 .\build-static\commandcode-usage.exe --selftest
-# SELFTEST: configFile = C:\Users\<你>\AppData\LocalLow\...\settings.ini (exists=yes)
+# SELFTEST: configFile = C:\Users\<你>\AppData\Roaming\...\settings.ini (exists=yes)
 ```
 
 | 键 | 说明 | 默认值 |
@@ -240,6 +248,8 @@ CommandCodeUsageMonitor/
     ├── CommandCodeApi.h/.cpp  # 四个接口的客户端
     ├── SegmentedBar.h/.cpp    # 分段进度条控件
     ├── SettingsDialog.h/.cpp  # 设置对话框
+    ├── TrayController.h/.cpp  # 通知区域图标（含 Win11 溢出区自动提升）
+    ├── TaskbarProgress.h/.cpp # 任务栏进度条与角标（ITaskbarList3 封装）
     └── MainWindow.h/.cpp      # 主窗口
 ```
 

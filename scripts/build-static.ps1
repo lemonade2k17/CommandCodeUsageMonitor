@@ -70,3 +70,21 @@ if (Test-Path $objdump) {
         Write-Host "`n通过：不依赖任何 Qt6*.dll，可单文件分发" -ForegroundColor Green
     }
 }
+
+# ---- 交付前把 exe 的完整性级别显式设为 Medium ----
+# 背景：开发机的会话沙箱给项目所在目录打了低完整性（Low Integrity Level，低完整性级别）
+# 强制标签并被子项继承，Windows 会按"映像文件的强制标签"降权启动进程——即使从
+# 资源管理器（中完整性）双击，本 exe 启动的进程也是低完整性。后果有三：
+#   ① 任务栏 ITaskbarList3（COM，组件对象模型）调用被 UIPI（User Interface Privilege
+#      Isolation，用户界面特权隔离）拒绝，进度条与角标全部失效（E_ACCESSDENIED）；
+#   ② QSystemTrayIcon 的注册可能被外壳拒绝，托盘图标不出现；
+#   ③ QStandardPaths 把配置目录重定向到 LocalLow，配置位置随启动方式漂移。
+# 显式的文件级标签优先于从目录继承的标签，因此构建末尾统一打一次 Medium 标签，
+# 使双击运行恢复为正常的中完整性进程。每次重新链接都会生成新文件（重新继承目录
+# 标签），所以这一步必须放在每次构建的最后，不能只做一次。
+$icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+Write-Host "`n=== 设置 exe 完整性级别为 Medium ===" -ForegroundColor Cyan
+& $icacls $exe /setintegritylevel M
+if ($LASTEXITCODE -ne 0) { throw "icacls /setintegritylevel 失败（退出码 $LASTEXITCODE）" }
+# 回显标签行，便于在构建日志里直接核对（应出现 Medium Mandatory Level）
+& $icacls $exe | Select-String 'Mandatory'
