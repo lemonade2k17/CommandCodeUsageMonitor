@@ -14,11 +14,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+# Windows 应用图标：app.rc 引用 resources/app.ico（多尺寸 256/48/32/16），
+# 由 MinGW 的 windres 编译进 exe 资源段——任务栏、标题栏与资源管理器共用该图标。
+enable_language(RC)
+
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Network)
 qt_standard_project_setup()
 
 qt_add_executable(commandcode-usage
     WIN32
+    resources/app.rc
     src/main.cpp
     src/AppConfig.h
     src/AppConfig.cpp
