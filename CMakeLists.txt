@@ -63,9 +63,14 @@ set(CCUM_STATIC_QT FALSE)
 if(DEFINED QT6_INSTALL_PREFIX)
     message(STATUS "Qt 安装目录 -> ${QT6_INSTALL_PREFIX}")
     if(EXISTS "${QT6_INSTALL_PREFIX}/bin/Qt6Core.dll")
-        message(WARNING
-            "本次使用【共享版 Qt】：产物会依赖 Qt6*.dll，"
-            "需用 windeployqt 或手工拷贝 DLL 才能独立运行。")
+        # 本工程只做静态链接：一旦发现共享版 Qt 前缀就直接终止配置，避免误产出
+        # 依赖 Qt6*.dll 的动态产物（那类产物还会被 PATH 上其它软件自带的旧版
+        # Qt 干扰，实测会报"无法定位程序输入点"）。
+        message(FATAL_ERROR
+            "本工程只支持【静态链接】：${QT6_INSTALL_PREFIX} 是共享版 Qt"
+            "（存在 bin/Qt6Core.dll），继续配置会产出依赖 Qt6*.dll 的产物。\n"
+            "请改用静态 Qt 前缀（默认 D:/qt-static/install，"
+            "由 scripts/build-static-qt.ps1 生成），或直接运行 scripts/build-static.ps1。")
     else()
         set(CCUM_STATIC_QT TRUE)
         message(STATUS "本次使用【静态 Qt】：产物应为单文件 exe。")

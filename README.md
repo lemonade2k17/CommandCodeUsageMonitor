@@ -3,7 +3,7 @@
 一个 Windows 桌面小工具，用 Qt 6.11.2 编写，用于查看 [Command Code](https://commandcode.ai) 账号的套餐额度与用量限制。
 
 - **API Key 默认留空**，由使用者在界面里自行配置，不硬编码任何凭据。
-- 支持**静态链接**构建（单文件 exe，不依赖任何 `Qt6*.dll`）与普通共享版构建两种方式。
+- **只支持静态链接**构建：产出单文件 exe，不依赖任何 `Qt6*.dll`，也不依赖 `libstdc++-6`/`libgcc_s_seh-1`/`libwinpthread-1`。
 
 ## 界面
 
@@ -130,26 +130,16 @@ Windows 11 会把新托盘图标收进**溢出区**（任务栏上的 `^`）。�
 
 ### 依赖
 
-- Qt **6.11.2**（`Core` / `Gui` / `Widgets` / `Network`）
-- CMake ≥ 3.22、Ninja、MinGW-w64 GCC ≥ 11（或 MSVC）
+- **静态** Qt **6.11.2**（`Core` / `Gui` / `Widgets` / `Network`；自建于 `D:\qt-static\install`，
+  由 `scripts\build-static-qt.ps1` 生成。Qt 官方安装器只提供共享版，不能用于本工程）
+- CMake ≥ 3.22、Ninja、MinGW-w64 GCC ≥ 11
 
-### 方式一：用已安装的 Qt 构建（共享版，最快）
+### 静态链接构建（单文件 exe）
 
-```powershell
-$env:PATH = 'D:\Qt\6.11.2\mingw_64\bin;D:\Qt\Tools\mingw1310_64\bin;D:\Qt\Tools\Ninja;D:\Qt\Tools\CMake_64\bin;' + $env:PATH
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=D:\Qt\6.11.2\mingw_64
-cmake --build build
-```
-
-产物 `build\commandcode-usage.exe` 依赖 `Qt6Core/Gui/Widgets/Network.dll`，需把 DLL 放在 exe 旁边或加入 `PATH`：
-
-```powershell
-D:\Qt\6.11.2\mingw_64\bin\windeployqt.exe build\commandcode-usage.exe
-```
-
-### 方式二：静态链接（单文件 exe）
-
-Qt 官方安装器提供的都是**共享版**（`qconfig.pri` 里 `static` 属于 disabled features），要静态链接必须自己从源码编译一份静态 Qt（仅 `qtbase` 即可，包含 Core/Gui/Widgets/Network）：
+本工程**只支持静态链接**：Qt 官方安装器提供的都是共享版（`qconfig.pri` 里 `static` 属于
+disabled features），因此必须先自己从源码编译一份静态 Qt（仅 `qtbase` 即可，包含
+Core/Gui/Widgets/Network）。CMake 配置阶段会检查 Qt 前缀：若发现 `bin/Qt6Core.dll`
+（共享版）会**直接报错终止**，杜绝误产出动态链接产物。
 
 ```powershell
 .\scripts\build-static-qt.ps1        # 约 45~90 分钟（4 核），产出 D:\qt-static\install
@@ -175,14 +165,14 @@ objdump -p build-static\commandcode-usage.exe | Select-String 'DLL Name'
 
 导入表里应**只有** `KERNEL32.dll`、`msvcrt.dll`、`SHELL32.dll` 等系统 DLL，**不应出现任何 `Qt6*.dll`**。
 
-### 本机实测结果（供对照）
+### 本机实测结果
 
-| 项目 | 共享版 | 静态版 |
-|---|---|---|
-| 产物 | `build\commandcode-usage.exe` | `build-static\commandcode-usage.exe` |
-| 体积 | 0.27 MB | **28.32 MB** |
-| 依赖 DLL | `Qt6Core/Gui/Widgets/Network.dll` + 系统 DLL | **仅系统 DLL**（无任何 `Qt6*.dll`、无 `libstdc++/libgcc/winpthread`、无 zlib/png/jpeg/freetype 外部库） |
-| 分发 | 需 `windeployqt` 或拷贝 Qt DLL | 单文件直接分发 |
+| 项目 | 结果 |
+|---|---|
+| 产物 | `build-static\commandcode-usage.exe`（工程唯一产物，不再产出动态链接版本） |
+| 体积 | 约 **28.4 MB** |
+| 依赖 DLL | **仅系统 DLL**（导入表 37 条：`KERNEL32`/`USER32`/`SHELL32`/`ole32` 等；无任何 `Qt6*.dll`，也无 `libstdc++/libgcc/winpthread` 与 zlib/png/jpeg/freetype 外部库） |
+| 分发 | 单文件直接分发：无需 windeployqt，也不受 PATH 上其它软件自带 Qt 的影响 |
 
 静态 Qt 构建耗时：`i7-1165G7`（4 核 8 线程，`ninja -j6`）约 **50 分钟**（含 configure 约 2.5 分钟、编译 1850 个目标、安装）。
 
@@ -234,15 +224,15 @@ CommandCodeUsageMonitor/
 ├── README.md
 ├── .gitignore
 ├── scripts/
-│   ├── build.ps1              # 共享版构建 + 可选 windeployqt
-│   ├── build-static-qt.ps1    # 从源码构建静态 Qt
-│   └── build-static.ps1       # 用静态 Qt 构建本项目
+│   ├── build-static-qt.ps1    # 从源码构建静态 Qt（一次性，约 45~90 分钟）
+│   └── build-static.ps1       # 用静态 Qt 构建本项目（唯一构建入口）
 └── src/
     ├── main.cpp               # 入口 + 自检模式
     ├── AppConfig.h/.cpp       # 配置读写（QSettings INI）
     ├── UsageTypes.h           # 数据结构 + 套餐目录
     ├── CommandCodeApi.h/.cpp  # 四个接口的客户端
     ├── SegmentedBar.h/.cpp    # 分段进度条控件
+    ├── AppTheme.h/.cpp        # 浅色 / 深色 / 跟随系统 三档主题
     ├── SettingsDialog.h/.cpp  # 设置对话框
     ├── TrayController.h/.cpp  # 通知区域图标（含 Win11 溢出区自动提升）
     ├── TaskbarProgress.h/.cpp # 任务栏进度条与角标（ITaskbarList3 封装）
@@ -254,4 +244,3 @@ CommandCodeUsageMonitor/
 - 服务端只提供账号级聚合数据，**没有按模型拆分的用量/计费**；本工具同样只能显示聚合口径。若需要按模型统计，只能在本机会话记录或调用侧自行记账。
 - 接口未公开、无版本承诺，Command Code 若调整 `/alpha/*` 路径或字段，需要同步更新 `CommandCodeApi.cpp`。
 - 界面语言为简体中文，随系统字体渲染。
-- **共享版必须先部署运行库再分发**（`build.ps1 -Deploy` 或手动 windeployqt）：exe 本身不带 Qt DLL，若直接双击，加载器会顺着 PATH 找 `Qt6Core.dll`——PATH 上其它软件自带的旧版 Qt（实测：Snipaste 目录里的 Qt6Core.dll 就会被命中）缺少新版导出符号，会报"无法定位程序输入点 _Z20qEnvironmentVariable…"。部署到 exe 旁之后，加载器优先使用同目录 DLL，不再受 PATH 干扰。需要单文件分发时请改用静态版。
