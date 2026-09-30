@@ -897,9 +897,15 @@ void MainWindow::onTick()
     // 以 5 小时窗口的 hasReset 作为整组是否有效的判据：两个窗口通常同时有数据
     if (m_fiveHourReset && m_fiveHourReset->property("hasReset").toBool())
     {
-        // 重置时刻由 applySnapshot() 写入动态属性，这里只负责按当前时间重算文案
-        m_fiveHourReset->setText(formatCountdown(m_fiveHourReset->property("resetAt").toDateTime()));
-        m_weeklyReset->setText(formatCountdown(m_weeklyReset->property("resetAt").toDateTime()));
+        // 重置时刻与用量后缀都由 applySnapshot() 写入动态属性，这里只按当前时间重算
+        // 倒计时部分，再把同一个后缀拼回去。两者必须一起写：只写倒计时会让刷新时
+        // 刚显示的用量在 1 秒后消失，形成"每次刷新闪一下用量"的观感。
+        const auto refreshResetText = [](QLabel *label) {
+            const QString countdown = MainWindow::formatCountdown(label->property("resetAt").toDateTime());
+            label->setText(countdown + label->property("detailSuffix").toString());
+        };
+        refreshResetText(m_fiveHourReset);
+        refreshResetText(m_weeklyReset);
     }
 }
 
@@ -1271,13 +1277,23 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
         resetLabel->setProperty("hasReset", true);
         resetLabel->setProperty("resetAt", limit.resetAt);
         const QString text = MainWindow::formatCountdown(limit.resetAt);
-        // 有实际用量时展示「已用 / 上限」，用量为 0 时只展示上限，突出「还没用」的信号
-        resetLabel->setText(limit.used > 0.0
-                                ? QStringLiteral("%1　（已用 %2 / %3）").arg(text).arg(limit.used, 0, 'f', 2).arg(limit.cap, 0, 'f', 0)
-                                : QStringLiteral("%1　（上限 %2）").arg(text).arg(limit.cap, 0, 'f', 0));
-        // 上游未给出重置时间时，用调用方提供的兜底文案替换「重置时间未知」
+        // 有实际用量时展示「已用 / 上限」，用量为 0 时只展示上限，突出「还没用」的信号。
+        // 后缀单独存进动态属性供每秒心跳复用：心跳只重算倒计时本身，如果不把后缀
+        // 一起拼回去，刷新时刚写入的用量会在 1 秒后被抹掉，表现为"每次刷新闪一下用量"。
+        const QString detail = limit.used > 0.0
+                                   ? QStringLiteral("　（已用 %1 / %2）").arg(limit.used, 0, 'f', 2).arg(limit.cap, 0, 'f', 0)
+                                   : QStringLiteral("　（上限 %1）").arg(limit.cap, 0, 'f', 0);
+        resetLabel->setProperty("detailSuffix", detail);
+        resetLabel->setText(text + detail);
+        // 上游未给出重置时间时，用调用方提供的兜底文案替换整行。此时除了清掉后缀属性，
+        // 还必须关掉心跳重算：兜底文案由调用方给定，心跳既无法重算也无法把它拼回来，
+        // 不关就会像用量后缀那样在 1 秒后被覆盖（同一类闪烁）。
         if (!text.isEmpty() && text.startsWith(QStringLiteral("重置时间未知")) && !fallbackReset.isEmpty())
+        {
+            resetLabel->setProperty("detailSuffix", QString());
+            resetLabel->setProperty("hasReset", false);
             resetLabel->setText(fallbackReset);
+        }
     };
 
     // 5 小时与每周窗口：分母分别是各自的上限，走统一的限流渲染逻辑
