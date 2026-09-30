@@ -459,6 +459,9 @@ void MainWindow::buildUi()
     // 上下各加一个弹簧，使内容在卡片长高后仍保持垂直居中
     // 套餐卡的信息层级：套餐名（大字号）→ 状态与周期（灰色小字）→ 剩余额度（大字号）
     // → 进度条 → 明细，上下各一个弹簧把这五段整体压在卡片中央，避免贴顶。
+    // 行对齐约束：右侧「本周期统计」卡正文与本卡逐行镜像（见 statsBody 处注释），
+    // 调整本卡行序或行数时必须同步右侧，否则两卡正文总高不等，垂直居中后
+    // 同行元素（套餐名 ↔ 运行次数、剩余额度 ↔ tokens）会上下错位。
     planBody->addStretch(1);
     planBody->addWidget(m_planName);
     planBody->addWidget(m_planStatus);
@@ -490,17 +493,34 @@ void MainWindow::buildUi()
     // 成本：已消耗 credits 与单次平均成本
     m_costValue = new QLabel(QStringLiteral("—"));
     m_costValue->setObjectName(QStringLiteral("muted"));
-    // 同样上下留弹簧，保证两组指标在卡片内垂直居中
+    // 同样上下留弹簧，保证两组指标在卡片内垂直居中。
+    // 行序刻意与左侧套餐卡逐行镜像：大字号 / 灰字 / 灰字 / 6px / 大字号 /
+    // 进度条槽位 / 灰字。两卡正文条目一一对应后总高度恒等（与字体度量无关），
+    // 垂直居中时上下弹簧平分相同的多余空间，两卡正文顶部因此落在同一水平线上，
+    // 「GOAT ↔ runs」「credits ↔ tokens」等同行元素不再上下错位。
     statsBody->addStretch(1);
     statsBody->addWidget(m_runsValue);
     statsBody->addWidget(m_successValue);
+    // 成本行上移至第三行：语义上「平均成本 / 次」属于运行组，同时也是行对齐的
+    // 前提——本卡第三行必须与左侧套餐卡的「计费周期」同为灰字行。
+    statsBody->addWidget(m_costValue);
     // 运行次数组与 token 组之间留出分隔
     statsBody->addSpacing(6);
     statsBody->addWidget(m_tokensValue);
+    // 进度条同位槽：用一根与左侧完全同类（同类名 → 同 QSS 规则、同 sizeHint、
+    // 同布局待遇）的分段进度条占位，隐藏但保留布局占位（retainSizeWhenHidden），
+    // 使两卡同一行的槽位高度与前后行距由 Qt 按同一规则算出，从结构上保证
+    // 「输入 / 输出」明细行与左侧「本周已用」明细行落在同一水平线上。
+    // 相比 addSpacing() 或固定高度空白控件：无需猜测进度条在 QSS 下的真实占高
+    // （实测墨迹行数与 sizeHint 并不一致），进度条规格或样式若调整，两卡自动保持一致。
+    auto *barSlot = new SegmentedBar;
+    barSlot->setPercent(0);
+    auto slotPolicy = barSlot->sizePolicy();
+    slotPolicy.setRetainSizeWhenHidden(true);
+    barSlot->setSizePolicy(slotPolicy);
+    barSlot->hide();
+    statsBody->addWidget(barSlot);
     statsBody->addWidget(m_tokensDetail);
-    // token 组与成本之间再分隔一次
-    statsBody->addSpacing(6);
-    statsBody->addWidget(m_costValue);
     statsBody->addStretch(1);
     row->addWidget(statsCard, 1);
 
