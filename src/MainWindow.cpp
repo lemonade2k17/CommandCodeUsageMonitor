@@ -481,9 +481,12 @@ void MainWindow::buildUi()
     // 运行次数：大字号主指标
     m_runsValue = new QLabel(QStringLiteral("—"));
     m_runsValue->setObjectName(QStringLiteral("bigValue"));
-    // 成功与失败次数、成功率：次要信息，小字灰色
+    // 成功与失败次数：次要信息，小字灰色
     m_successValue = new QLabel(QStringLiteral("—"));
     m_successValue->setObjectName(QStringLiteral("muted"));
+    // 成功率：独立灰字行，与左卡「计费周期」同位（两卡第一组逐行镜像）
+    m_successRate = new QLabel(QStringLiteral("—"));
+    m_successRate->setObjectName(QStringLiteral("muted"));
     // token 总量：大字号主指标，使用 K / M 缩写
     m_tokensValue = new QLabel(QStringLiteral("—"));
     m_tokensValue->setObjectName(QStringLiteral("bigValue"));
@@ -494,32 +497,23 @@ void MainWindow::buildUi()
     m_costValue = new QLabel(QStringLiteral("—"));
     m_costValue->setObjectName(QStringLiteral("muted"));
     // 同样上下留弹簧，保证两组指标在卡片内垂直居中。
-    // 行序刻意与左侧套餐卡逐行镜像：大字号 / 灰字 / 灰字 / 6px / 大字号 /
+    // 行序与左侧套餐卡逐行镜像：大字号 / 灰字 / 灰字 / 6px / 大字号 /
     // 进度条槽位 / 灰字。两卡正文条目一一对应后总高度恒等（与字体度量无关），
     // 垂直居中时上下弹簧平分相同的多余空间，两卡正文顶部因此落在同一水平线上，
-    // 「GOAT ↔ runs」「credits ↔ tokens」等同行元素不再上下错位。
+    // 「GOAT ↔ runs」「credits ↔ tokens」「进度条 ↔ 已消耗」等同行元素不再错位。
     statsBody->addStretch(1);
     statsBody->addWidget(m_runsValue);
     statsBody->addWidget(m_successValue);
-    // 成本行上移至第三行：语义上「平均成本 / 次」属于运行组，同时也是行对齐的
-    // 前提——本卡第三行必须与左侧套餐卡的「计费周期」同为灰字行。
-    statsBody->addWidget(m_costValue);
+    statsBody->addWidget(m_successRate);
     // 运行次数组与 token 组之间留出分隔
     statsBody->addSpacing(6);
     statsBody->addWidget(m_tokensValue);
-    // 进度条同位槽：用一根与左侧完全同类（同类名 → 同 QSS 规则、同 sizeHint、
-    // 同布局待遇）的分段进度条占位，隐藏但保留布局占位（retainSizeWhenHidden），
-    // 使两卡同一行的槽位高度与前后行距由 Qt 按同一规则算出，从结构上保证
-    // 「输入 / 输出」明细行与左侧「本周已用」明细行落在同一水平线上。
-    // 相比 addSpacing() 或固定高度空白控件：无需猜测进度条在 QSS 下的真实占高
-    // （实测墨迹行数与 sizeHint 并不一致），进度条规格或样式若调整，两卡自动保持一致。
-    auto *barSlot = new SegmentedBar;
-    barSlot->setPercent(0);
-    auto slotPolicy = barSlot->sizePolicy();
-    slotPolicy.setRetainSizeWhenHidden(true);
-    barSlot->setSizePolicy(slotPolicy);
-    barSlot->hide();
-    statsBody->addWidget(barSlot);
+    // 已消耗行占据左侧进度条的同位槽：高度锁定为进度条 sizeHint 同源的高度，
+    // 文字在其中垂直居中，该行因此与左卡进度条带同高同位（同一 y 轴）；
+    // 行距待遇与真实控件一致（前后各一个行距），两卡第 5~7 行全部逐行对齐。
+    // 高度取自 m_creditsBar，进度条规格调整时此处自动跟随。
+    m_costValue->setFixedHeight(m_creditsBar->sizeHint().height());
+    statsBody->addWidget(m_costValue);
     statsBody->addWidget(m_tokensDetail);
     statsBody->addStretch(1);
     row->addWidget(statsCard, 1);
@@ -1350,11 +1344,12 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     if (summary.valid)
     {
         m_runsValue->setText(tr("%1 runs").arg(summary.totalCount));
-        // 成功率由模型算好（保留一位小数），此处只负责排版
-        m_successValue->setText(tr("成功 %1 / 失败 %2　成功率 %3%")
+        // 成功率由模型算好（保留一位小数），此处只负责排版；
+        // 次数与成功率拆成两行灰字，与左卡「状态 / 计费周期」逐行镜像对齐
+        m_successValue->setText(tr("成功 %1 / 失败 %2")
                                     .arg(summary.completedCount)
-                                    .arg(summary.failedCount)
-                                    .arg(summary.successRate, 0, 'f', 1));
+                                    .arg(summary.failedCount));
+        m_successRate->setText(tr("成功率 %1%").arg(summary.successRate, 0, 'f', 1));
         m_tokensValue->setText(tr("%1 tokens").arg(formatTokens(summary.tokensTotal)));
         // 输入与输出分项同样走 K / M 缩写，保持与总量一致的阅读体验
         m_tokensDetail->setText(tr("输入 %1　输出 %2")

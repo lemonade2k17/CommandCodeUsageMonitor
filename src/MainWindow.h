@@ -394,10 +394,11 @@ private:
 
     // 统计卡
     QLabel *m_runsValue = nullptr;                ///< 本周期运行次数（大字号）
-    QLabel *m_successValue = nullptr;             ///< 成功 / 失败次数与成功率
+    QLabel *m_successValue = nullptr;             ///< 成功 / 失败次数
+    QLabel *m_successRate = nullptr;              ///< 成功率（独立灰字行，与左卡「计费周期」同位）
     QLabel *m_tokensValue = nullptr;              ///< 本周期 token 总用量（大字号，K/M 缩写）
     QLabel *m_tokensDetail = nullptr;             ///< 输入与输出 token 的分项数值
-    QLabel *m_costValue = nullptr;                ///< 已消耗 credits 与单次平均成本
+    QLabel *m_costValue = nullptr;                ///< 已消耗 credits 与单次平均成本（与左卡进度条同位等高）
 
     // ---------------- 刷新失败状态（状态栏「查询失败」文案的数据源） ----------------
     bool m_lastRefreshFailed = false;             ///< 上一次刷新是否失败；失败时状态栏持续显示原因
