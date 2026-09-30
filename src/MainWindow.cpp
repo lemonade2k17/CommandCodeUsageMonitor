@@ -1278,11 +1278,13 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
         resetLabel->setProperty("resetAt", limit.resetAt);
         const QString text = MainWindow::formatCountdown(limit.resetAt);
         // 有实际用量时展示「已用 / 上限」，用量为 0 时只展示上限，突出「还没用」的信号。
+        // 括号前不留分隔符，与套餐卡的「本周期已用 x credits（y%）」保持同一排版：
+        // 全角空格会撑出明显空隙，与卡片内其它行不协调。
         // 后缀单独存进动态属性供每秒心跳复用：心跳只重算倒计时本身，如果不把后缀
         // 一起拼回去，刷新时刚写入的用量会在 1 秒后被抹掉，表现为"每次刷新闪一下用量"。
         const QString detail = limit.used > 0.0
-                                   ? QStringLiteral("　（已用 %1 / %2）").arg(limit.used, 0, 'f', 2).arg(limit.cap, 0, 'f', 0)
-                                   : QStringLiteral("　（上限 %1）").arg(limit.cap, 0, 'f', 0);
+                                   ? QStringLiteral("（已用 %1 / %2）").arg(limit.used, 0, 'f', 2).arg(limit.cap, 0, 'f', 0)
+                                   : QStringLiteral("（上限 %1）").arg(limit.cap, 0, 'f', 0);
         resetLabel->setProperty("detailSuffix", detail);
         resetLabel->setText(text + detail);
         // 上游未给出重置时间时，用调用方提供的兜底文案替换整行。此时除了清掉后缀属性，
