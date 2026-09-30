@@ -4,12 +4,17 @@
 
 - **API Key 默认留空**，由使用者在界面里自行配置，不硬编码任何凭据。
 - **只支持静态链接**构建：产出单文件 exe，不依赖任何 `Qt6*.dll`，也不依赖 `libstdc++-6`/`libgcc_s_seh-1`/`libwinpthread-1`。
+- 内置**浅色 / 深色 / 跟随系统**三档主题，应用图标取自 Command Code 官方标志。
 
 ## 界面
 
-正常读取数据后：
+正常读取数据后（浅色主题）：
 
 ![用量界面](docs/screenshot-usage.png)
+
+深色主题（在「设置 → 外观主题」中切换，也可跟随系统）：
+
+![深色主题](docs/screenshot-dark.png)
 
 首次运行（API Key 默认留空，提示去「设置」填写）：
 
@@ -121,6 +126,11 @@ Windows 11 会把新托盘图标收进**溢出区**（任务栏上的 `^`）。�
 | `api/key` | API Key，**默认为空** | 空 |
 | `api/baseUrl` | API 地址 | `https://api.commandcode.ai` |
 | `ui/refreshSeconds` | 自动刷新间隔（秒），0 = 关闭 | `60` |
+| `ui/theme` | 外观主题：`light` / `dark` / `system` | `system`（跟随系统） |
+| `ui/statusMetric` | 托盘图标与角标显示的指标：`fiveHour` / `weekly` / `monthly` / `remaining` | `fiveHour` |
+| `ui/trayEnabled` | 是否显示托盘图标 | `true` |
+| `ui/taskbarBadgeEnabled` | 是否显示任务栏进度条与角标 | `true` |
+| `ui/closeToTray` | 关闭窗口时是否隐藏到托盘 | `false` |
 
 在「设置」里还可以点 **从 CLI 导入**，显式读取本机 `~/.commandcode/auth.json` 里的 `apiKey`（只有点击时才读取，不会自动读取）。
 
@@ -213,7 +223,7 @@ commandcode-usage.exe [--selftest] [--key <key>] [--base-url <url>] [--out <file
 自检示例：
 
 ```powershell
-.\build\commandcode-usage.exe --selftest --key user_xxx --out selftest.txt
+.\build-static\commandcode-usage.exe --selftest --key user_xxx --out selftest.txt
 ```
 
 ## 目录结构
@@ -223,24 +233,38 @@ CommandCodeUsageMonitor/
 ├── CMakeLists.txt
 ├── README.md
 ├── .gitignore
+├── resources/
+│   ├── app.ico               # 应用图标（256/48/32/16 四尺寸，来源见下）
+│   └── app.rc                # 资源脚本：把 app.ico 编进 exe（MinGW 由 windres 处理）
 ├── scripts/
 │   ├── build-static-qt.ps1    # 从源码构建静态 Qt（一次性，约 45~90 分钟）
 │   └── build-static.ps1       # 用静态 Qt 构建本项目（唯一构建入口）
 └── src/
     ├── main.cpp               # 入口 + 自检模式
     ├── AppConfig.h/.cpp       # 配置读写（QSettings INI）
+    ├── AppTheme.h/.cpp        # 浅色 / 深色 / 跟随系统 三档主题
     ├── UsageTypes.h           # 数据结构 + 套餐目录
     ├── CommandCodeApi.h/.cpp  # 四个接口的客户端
     ├── SegmentedBar.h/.cpp    # 分段进度条控件
-    ├── AppTheme.h/.cpp        # 浅色 / 深色 / 跟随系统 三档主题
     ├── SettingsDialog.h/.cpp  # 设置对话框
     ├── TrayController.h/.cpp  # 通知区域图标（含 Win11 溢出区自动提升）
     ├── TaskbarProgress.h/.cpp # 任务栏进度条与角标（ITaskbarList3 封装）
     └── MainWindow.h/.cpp      # 主窗口
 ```
 
+### 应用图标
+
+`resources/app.ico` 取自 Command Code 官方站点资源：官方 `favicon.ico` 自带
+48/32/16 三个尺寸，叠加由 `apple-touch-icon.png`（180×180 同一标志）高质量缩放
+出的 256px 条目，构成四尺寸 ICO；经 `resources/app.rc` 由 windres 编进 exe
+资源段，任务栏、标题栏与资源管理器共用。**图标版权归 Command Code 所有**，
+本工具是查看同一服务的个人辅助程序。
+
 ## 已知限制
 
 - 服务端只提供账号级聚合数据，**没有按模型拆分的用量/计费**；本工具同样只能显示聚合口径。若需要按模型统计，只能在本机会话记录或调用侧自行记账。
 - 接口未公开、无版本承诺，Command Code 若调整 `/alpha/*` 路径或字段，需要同步更新 `CommandCodeApi.cpp`。
 - 界面语言为简体中文，随系统字体渲染。
+- **5 小时窗口空闲时**（窗口内 `used = 0`），服务端不下发 `resetAt`（返回 0），此时
+  「5 小时限额」的重置文案显示「重置时间未知」——这是数据缺失时的如实降级，
+  不是故障；窗口内有用量后倒计时会自动出现。
