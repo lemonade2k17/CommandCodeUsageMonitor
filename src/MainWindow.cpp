@@ -1291,14 +1291,17 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
         resetLabel->setProperty("hasReset", true);
         resetLabel->setProperty("resetAt", limit.resetAt);
         const QString text = MainWindow::formatCountdown(limit.resetAt);
-        // 有实际用量时展示「已用 / 上限」，用量为 0 时只展示上限，突出「还没用」的信号。
+        // 用量后缀一律展示「（已用 / 上限）」的数值本身，不再冠以「已用」字样：
+        // 括号里的两个数含义自明（官网同款排版），前缀反而拉长文案；
+        // 近期未使用（used 为 0）时也按同一格式展示「（0 / 上限）」，
+        // 让三块限流区的括号排版在任何状态下都逐字对齐。
         // 括号前不留分隔符，与套餐卡的「本周期已用 x credits（y%）」保持同一排版：
         // 全角空格会撑出明显空隙，与卡片内其它行不协调。
         // 后缀单独存进动态属性供每秒心跳复用：心跳只重算倒计时本身，如果不把后缀
         // 一起拼回去，刷新时刚写入的用量会在 1 秒后被抹掉，表现为"每次刷新闪一下用量"。
-        const QString detail = limit.used > 0.0
-                                   ? QStringLiteral("（已用 %1 / %2）").arg(limit.used, 0, 'f', 2).arg(limit.cap, 0, 'f', 0)
-                                   : QStringLiteral("（上限 %1）").arg(limit.cap, 0, 'f', 0);
+        const QString detail = QStringLiteral("（%1 / %2）")
+                                   .arg(limit.used, 0, 'f', 2)
+                                   .arg(limit.cap, 0, 'f', 0);
         resetLabel->setProperty("detailSuffix", detail);
         resetLabel->setText(text + detail);
         // 上游未给出重置时间时，用调用方提供的兜底文案替换整行。此时除了清掉后缀属性，
@@ -1327,10 +1330,14 @@ void MainWindow::applySnapshot(const UsageSnapshot &snapshot)
     AppTheme::setLevel(m_monthlyPercent, creditsPercent >= 85   ? QStringLiteral("danger")
                                          : creditsPercent >= 60 ? QStringLiteral("warn")
                                                                 : QStringLiteral("ok"));
-    // 每月窗口的「重置」就是计费周期结束，因此直接展示周期结束时间而非倒计时
+    // 每月窗口的「重置」就是计费周期结束，因此直接展示周期结束时间而非倒计时；
+    // 用量后缀与上两块保持同一格式「（已用 / 上限）」，三块排版逐字对齐
     if (sub.currentPeriodEnd.isValid())
     {
-        m_monthlyReset->setText(tr("周期结束：%1").arg(formatDateTime(sub.currentPeriodEnd)));
+        m_monthlyReset->setText(tr("周期结束：%1").arg(formatDateTime(sub.currentPeriodEnd))
+                                + QStringLiteral("（%1 / %2）")
+                                      .arg(used, 0, 'f', 2)
+                                      .arg(planTotal, 0, 'f', 2));
     }
     else
     {
@@ -1456,7 +1463,7 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
         view.percent = limit.percent();
         // text 只放"N%"：图标里 3 个以上字符就会互相挤压，百分比已足够表达占用程度。
         view.text = QStringLiteral("%1%").arg(view.percent);
-        view.detail = tr("已用 %1 / %2　%3")
+        view.detail = tr("%1 / %2　%3")
                           .arg(limit.used, 0, 'f', 2)
                           .arg(limit.cap, 0, 'f', 0)
                           .arg(formatCountdown(limit.resetAt));
@@ -1472,7 +1479,7 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
         view.valid = limit.valid;
         view.percent = limit.percent();
         view.text = QStringLiteral("%1%").arg(view.percent);
-        view.detail = tr("已用 %1 / %2　%3")
+        view.detail = tr("%1 / %2　%3")
                           .arg(limit.used, 0, 'f', 2)
                           .arg(limit.cap, 0, 'f', 0)
                           .arg(formatCountdown(limit.resetAt));
@@ -1490,7 +1497,7 @@ MainWindow::MetricView MainWindow::metricView(const UsageSnapshot &snapshot) con
         view.valid = snapshot.credits.valid || snapshot.summary.valid;
         view.percent = percentOf(used, total);
         view.text = QStringLiteral("%1%").arg(view.percent);
-        view.detail = tr("已用 %1 / %2 credits　周期结束 %3")
+        view.detail = tr("%1 / %2 credits　周期结束 %3")
                           .arg(used, 0, 'f', 2)
                           .arg(total, 0, 'f', 2)
                           .arg(formatDateTime(snapshot.subscription.currentPeriodEnd));
